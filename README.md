@@ -4,7 +4,7 @@
 
 **Physics emulator + GPT from scratch in C — every number measured, every claim verified.**
 
-[![tests](https://img.shields.io/badge/tests-25%2F25-brightgreen)]() [![parity](https://img.shields.io/badge/kernel%20parity-6%2F6-brightgreen)]() [![gradcheck](https://img.shields.io/badge/gradcheck-PASS-brightgreen)]() [![license](https://img.shields.io/badge/license-MIT-blue)]()
+[![CI](https://github.com/bahira/lightemulator/actions/workflows/ci.yml/badge.svg)](https://github.com/bahira/lightemulator/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-28%2F28-brightgreen)]() [![parity](https://img.shields.io/badge/kernel%20parity-6%2F6-brightgreen)]() [![gradcheck](https://img.shields.io/badge/gradcheck-PASS-brightgreen)]() [![license](https://img.shields.io/badge/license-MIT-blue)]()
 
 **[🔬 Live verification page →](https://bahira.github.io/lightemulator/)** — run the kernels in your browser, watch the receipts appear.
 **[🎮 Full emulator demo →](https://bahira.github.io/lightemulator/demo.html)** — the 9 labs, running client-side, no install.
@@ -65,6 +65,25 @@ The honest parts: attention tiling caps at ×1.05 wall time (Amdahl — skipped 
 ## The verification loop
 
 25 tests, each with a number: Parseval, power conservation, MZI unitarity, CIM vs exact optimum, spline derivatives, gradient checks, Sellmeier dispersion, Fresnel biaxial. Plus kernel parity 6/6 against libm, GEMM auto-tests (forward + backward, N%8 ≠ 0 included), and a gradient check against finite differences on every training run. See [`SPEAR_REPORT_2026-09-21.md`](SPEAR_REPORT_2026-09-21.md) for the full measured report and [`SHOWCASES.md`](SHOWCASES.md) for the complete quality showcase catalog.
+
+## Roadmap
+
+| Milestone | Scope | Status |
+|---|---|---|
+| **v0.1 — Fondations vérifiées** | 10 labs, kernels AVX2, GPT en C, page live, robot animé, drones, CI | ✅ shipped |
+| **v0.2 — Interactivité & playground** | drag des balises, cerveau drone entraînable, éditeur de trajectoire robot, galerie d'exemples partageables | 🔜 |
+| **v0.3 — Performance & portage** | taille du modèle GPT, export WASM des kernels, quantization int8 documentée, package npm des modules physics | 🔜 |
+| **v1.0 — Release sérieuse** | docs site (cours), suite de benchmarks reproductible en CI, communauté, changelog | 🔜 |
+
+Full issue tracker on the [milestones page](https://github.com/bahira/lightemulator/milestones).
+
+## Contributing
+
+PRs welcome — one rule: **every number is measured, every claim is verified**. Any contribution that adds a numeric claim must come with an independent reference (analytic solution, conservation law, exhaustive enumeration, finite differences). New physics modules must be pure TypeScript, zero dependencies, with a test in `src/physics/validate.ts`. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full workflow, and the [`good first issue`](https://github.com/bahira/lightemulator/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) label for an entry point.
+
+## License
+
+[MIT](LICENSE) — free to use, modify, and sell. The physics modules are dependency-free single files: copy one, it works.
 
 ---
 
