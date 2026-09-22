@@ -30,6 +30,7 @@ import {
   FUSED_SILICA, BK7, sellmeier, gdd, zeroDispersionLambda,
   pulseWidthGDD, pulsePropagation, fresnelBiaxial,
 } from './optics';
+import { phototaxisError, trilaterationError, friisError } from './drones';
 
 export interface TestResult {
   group: string;
@@ -72,7 +73,8 @@ export type TestId =
   | 'kan-pou' | 'kan-dbasis' | 'kan-grad'
   | 'fep-gradient'
   | 'ctrl-ik' | 'ctrl-traj' | 'ctrl-vdot' | 'ctrl-stab'
-  | 'opt-sellmeier' | 'opt-gdd' | 'opt-pulse' | 'opt-fresnel';
+  | 'opt-sellmeier' | 'opt-gdd' | 'opt-pulse' | 'opt-fresnel'
+  | 'drone-phototaxie' | 'drone-trilateration' | 'drone-link';
 
 export const TEST_ORDER: TestId[] = [
   'fft-roundtrip', 'fft-parseval', 'fft-tone',
@@ -83,10 +85,31 @@ export const TEST_ORDER: TestId[] = [
   'fep-gradient',
   'ctrl-ik', 'ctrl-traj', 'ctrl-vdot', 'ctrl-stab',
   'opt-sellmeier', 'opt-gdd', 'opt-pulse', 'opt-fresnel',
+  'drone-phototaxie', 'drone-trilateration', 'drone-link',
 ];
 
 export function runTest(id: TestId): TestResult {
   switch (id) {
+    // ---- Drones ------------------------------------------------------------
+    case 'drone-phototaxie': {
+      const { v, ms } = timed(() => phototaxisError());
+      return mk('Drones', 'Phototaxie — convergence', 'Le drone converge vers la source lumineuse',
+        'Champ 1/d² à source unique : le gradient pointe toujours vers elle, trajectoire droite',
+        v.dist, 0.015, ms, `arrêt en ${v.steps} pas (maxV = 1,2 cm/s normalisé)`);
+    }
+    case 'drone-trilateration': {
+      const { v, ms } = timed(() => trilaterationError());
+      return mk('Drones', 'Trilatération exacte', 'La position est reconstruite des distances à l’epsilon machine',
+        '3 balises, ranges exacts — différenciation + solve 2×2 fermé (équations normales)',
+        v.err, 1e-9, ms);
+    }
+    case 'drone-link': {
+      const { v, ms } = timed(() => friisError());
+      return mk('Drones', 'Budget de liaison (Friis)', 'La puissance reçue suit l’inverse-square',
+        'Pr(2d) = Pr(d)/4 exactement, sur 40 distances de 0,15 à 2,1 m',
+        v.rel, 1e-12, ms);
+    }
+
     // ---- FFT ---------------------------------------------------------------
     case 'fft-roundtrip': {
       const { v, ms } = timed(() => fftRoundTripError(4096));
