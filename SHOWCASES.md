@@ -42,15 +42,16 @@ Champs complexes apprenant par contraste d'équilibre (EP).
 
 ### 1.7 Robot animé (nouveau)
 Bras SCARA **en mouvement** : suivi de trajectoire par waypoints, chaque segment est un déplacement temps-minimal exact (planProfile, 3 régimes) exécuté par IK fermée — zéro itération, zéro heap, comme un vrai contrôleur.
-- **3 trajectoires** : cercle (régime palier, D ≈ 0,12 m > D_crz), ligne (régime réduit, D ≈ 0,04 m < D_sat), huit (lemniscate de Gerono, les deux régimes)
+- **4 trajectoires** : cercle (régime palier, D ≈ 0,12 m > D_crz), ligne (régime réduit, D ≈ 0,04 m < D_sat), huit (lemniscate de Gerono), **custom — waypoints cliquables à la souris avec replanification exacte**
 - **Télémétrie live** : v, a effecteur (profil exact), θ₁/θ₂, résidu FK∘IK machine
 - Vérifié par `ctrl-ik` (3.00e-16) et `ctrl-traj` (violations = 0)
 
 ### 1.8 Drones lumineux (nouveau)
-Playground de **drones intelligents naviguant par la lumière** : phototaxie réelle (gradient du champ 1/d²), séparation d'essaim, positionnement par trilatération exacte, liaison de Friis (LED IR 940 nm, pièce 3×3 m). Panneau « cerveau photonique » : les 4 photodiodes du drone montrent le gradient qu'il suit.
+Playground de **drones intelligents naviguant par la lumière** : phototaxie réelle (gradient du champ 1/d²), séparation d'essaim, positionnement par trilatération exacte, liaison de Friis (LED IR 940 nm, pièce 3×3 m). Panneau « cerveau photonique » : les 4 photodiodes du drone montrent le gradient qu'il suit. **Balises draggables à la souris** et **apprentissage en ligne (1+1-ES élitiste)** : chaque drone ajuste ses gains (kPh, kSep) par fenêtre, fitness jamais dégradée.
 - **Phototaxie — convergence** : 0.0089 ≤ 0.015 (arrêt en pas bornés, trajectoire droite garantie — le gradient d'une source unique pointe toujours vers elle)
 - **Trilatération exacte** : 2.48e-16 — l'epsilon machine (différenciation + solve 2×2 fermé)
 - **Budget Friis** : 0 exactement — Pr(2d) = Pr(d)/4 sur 40 distances
+- **Apprentissage (1+1-ES)** : monotonie de l'élitisme — bestFit **jamais croissante**, 0 d'augmentation sur 1200 pas / 6 drones / 2 balises hétérogènes
 
 ### 1.9 Dispersion
 Sellmeier exact avec dérivées 1ʳᵉ–3ᵉ (TOD), GDD, impulsion femtoseconde, Fresnel biaxial.
@@ -77,7 +78,19 @@ Entraînement complet from scratch (forward + backward exacte + Adam) sur TinySt
 | rsqrt — rsqrtss + Newton | ×0.52 (honnête) | **L∞ 2.7e-7** |
 | Entraînement 270k params | 9300 tok/s | val loss 3.79 (hasard 4.64) |
 
-**Validations** : auto-test GEMM 4 chemins (nt + nt_t + dxd + tndw, N%8 ≠ 0 inclus) 1.4e-6 · gradcheck vs différences finies 0.0044 · parité noyaux 6/6 · 28/28 tests grounded.
+**Validations** : auto-test GEMM 4 chemins (nt + nt_t + dxd + tndw, N%8 ≠ 0 inclus) 1.4e-6 · gradcheck vs différences finies 0.0044 · parité noyaux 6/6 · 29/29 tests grounded.
+
+### Quantization (v0.3 — documentée)
+
+Les 3 modes de quantization du training (`--quant-e8`, `--quant-int8`, `--quant-int4`), mesurés à 60 steps (val loss FP32 = 3.786) :
+
+| Mode | Bits/poids | Val loss | Delta |
+|---|---|---|---|
+| E8 (scale par bloc, coords ±2 sur 5 bits) | ~7.1 | 3.810 | +0.024 |
+| INT8 bloc | ~10 | 3.809 | +0.023 |
+| INT4 bloc | ~6 | 3.808 | +0.022 |
+
+Lecture honnête : les trois modes perdent ~+0.02 val loss — à cette échelle (60 steps), la différence entre eux est dans le bruit. L'erreur RMS de quantization INT8 est ~0.39% par matrice.
 
 ---
 
@@ -106,11 +119,16 @@ Entraînement complet from scratch (forward + backward exacte + Adam) sur TinySt
 
 ## 5. Où ça va
 
-1. Cerveau drone entraînable (gains de phototaxie appris en ligne)
-2. Drag des balises à la souris (~20 lignes)
-3. Taille du modèle GPT (le GEMM n'est plus le frein)
-4. Capture email / formation sur la page live (le pipeline de monétisation)
-5. Licence du repo
+1. ~~Drag des balises à la souris~~ — **fait** (v0.2)
+2. ~~Cerveau drone entraînable (1+1-ES)~~ — **fait** (v0.2)
+3. ~~Waypoints custom cliquables~~ — **fait** (v0.2)
+4. ~~Quantization documentée + bench~~ — **fait** (v0.3)
+5. Galerie d'exemples partageables par URL (état complet par lab) — issue #4
+6. Taille du modèle GPT (le GEMM n'est plus le frein) — issue #5
+7. Export WASM des kernels (mm_nt_t multi-acc dans le navigateur) — issue #6
+8. Package npm des modules physics — issue #8
+9. Docs site / cours — issue #9
+10. Capture email sur la page live (le pipeline de monétisation)
 
 ---
 

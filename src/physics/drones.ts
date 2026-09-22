@@ -74,21 +74,82 @@ export interface SwarmParams {
   dt: number;    // pas d'intégration
 }
 
+/** État d'apprentissage par drone : gains actifs + incumbent (1+1-ES). */
+export interface LearnerState {
+  kPh: number; kSep: number;          // gains actifs (le drone vole avec)
+  bestKPh: number; bestKSep: number;  // incumbent — a réalisé bestFit
+  bestFit: number;                    // distance moyenne minimale atteinte
+  distAcc: number; stepsInWindow: number;
+}
+
+export function makeLearners(n: number, kPh = 2.2, kSep = 0.3): LearnerState[] {
+  return Array.from({ length: n }, () => ({
+    kPh, kSep, bestKPh: kPh, bestKSep: kSep,
+    bestFit: Infinity, distAcc: 0, stepsInWindow: 0,
+  }));
+}
+
+/** RNG mulberry32 interne (zéro dépendance, déterministe par seed). */
+export function rng32(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Apprentissage en ligne (1+1-ES élitiste) : chaque fenêtre de windowLen pas,
+ * la fitness locale (distance moyenne à la balise la plus proche) est évaluée.
+ * Le candidat n'est gardé que s'il ne dégrade pas l'incumbent — l'élitisme
+ * GARANTIT que bestFit est monotone non-croissante (vérifié par validate.ts,
+ * test 'drone-apprentissage').
+ */
+export function learnStep(
+  drones: Drone[], beacons: Beacon[], L: LearnerState[],
+  rng: () => number, windowLen = 30, jitter = 0.18,
+): void {
+  for (let i = 0; i < drones.length; i++) {
+    const d = drones[i], l = L[i];
+    let m = Infinity;
+    for (let j = 0; j < beacons.length; j++) {
+      const b = beacons[j];
+      const r = Math.hypot(d.x - b.x, d.y - b.y);
+      if (r < m) m = r;
+    }
+    l.distAcc += m;
+    if (++l.stepsInWindow >= windowLen) {
+      const fit = l.distAcc / windowLen;
+      if (fit <= l.bestFit) { l.bestFit = fit; l.bestKPh = l.kPh; l.bestKSep = l.kSep; }
+      // élitisme : on repart toujours de l'incumbent
+      l.kPh = Math.min(4, Math.max(0.5, l.bestKPh + (rng() * 2 - 1) * jitter));
+      l.kSep = Math.min(1.2, Math.max(0, l.bestKSep + (rng() * 2 - 1) * jitter * 0.6));
+      l.distAcc = 0; l.stepsInWindow = 0;
+    }
+  }
+}
+
 /**
  * Un pas d'essaim : phototaxie (grimpe le gradient de lumière) + séparation
  * + murs mous + amortissement + clamp de vitesse. Mute les drones en place.
+ * `L` optionnel : gains appris par drone (remplacent p.kPh / p.kSep).
  */
-export function swarmStep(drones: Drone[], beacons: Beacon[], p: SwarmParams): void {
+export function swarmStep(drones: Drone[], beacons: Beacon[], p: SwarmParams, L?: LearnerState[]): void {
   const n = drones.length;
   for (let i = 0; i < n; i++) {
     const d = drones[i];
+    const kPhI = L ? L[i].kPh : p.kPh;
+    const kSepI = L ? L[i].kSep : p.kSep;
     // phototaxie : direction = gradient normalisé (source unique → droite)
     const { gx, gy } = lightGrad(beacons, d.x, d.y);
     const gn = Math.hypot(gx, gy) + 1e-12;
-    let ax = (gx / gn) * p.kPh;
-    let ay = (gy / gn) * p.kPh;
+    let ax = (gx / gn) * kPhI;
+    let ay = (gy / gn) * kPhI;
     // séparation : répulsion 1/r dans le rayon rSep
-    if (p.kSep > 0) {
+    if (kSepI > 0) {
       for (let j = 0; j < n; j++) {
         if (j === i) continue;
         const o = drones[j];
@@ -96,16 +157,16 @@ export function swarmStep(drones: Drone[], beacons: Beacon[], p: SwarmParams): v
         const r2 = dx * dx + dy * dy;
         if (r2 < p.rSep * p.rSep && r2 > 1e-12) {
           const r = Math.sqrt(r2);
-          const f = p.kSep * (1 - r / p.rSep) / r;
+          const f = kSepI * (1 - r / p.rSep) / r;
           ax += dx * f; ay += dy * f;
         }
       }
       // murs mous (bord de l'arène unité)
       const W = 0.07;
-      if (d.x < W) ax += p.kSep * (W - d.x) / W;
-      if (d.x > 1 - W) ax -= p.kSep * (d.x - (1 - W)) / W;
-      if (d.y < W) ay += p.kSep * (W - d.y) / W;
-      if (d.y > 1 - W) ay -= p.kSep * (d.y - (1 - W)) / W;
+      if (d.x < W) ax += kSepI * (W - d.x) / W;
+      if (d.x > 1 - W) ax -= kSepI * (d.x - (1 - W)) / W;
+      if (d.y < W) ay += kSepI * (W - d.y) / W;
+      if (d.y > 1 - W) ay -= kSepI * (d.y - (1 - W)) / W;
     }
     // intégration + amortissement + clamp
     d.vx = (d.vx + ax * p.dt) * 0.985;
@@ -177,4 +238,33 @@ export function friisError(): { rel: number; ms: number } {
     worst = Math.max(worst, Math.abs(p2 - p1 / 4) / p1);
   }
   return { rel: worst, ms: performance.now() - t0 };
+}
+
+/**
+ * Apprentissage (1+1-ES) : monotonie de l'élitisme. bestFit ne doit JAMAIS
+ * croître au cours d'un run — garantie structurelle de l'algorithme élitiste.
+ */
+export function learningMonotonicity(): { maxIncrease: number; windows: number; finalFit: number; ms: number } {
+  const t0 = performance.now();
+  const beacons: Beacon[] = [
+    { x: 0.3, y: 0.3, power: 1 }, { x: 0.75, y: 0.65, power: 1.3 },
+  ];
+  const rng = rng32(42);
+  const drones: Drone[] = Array.from({ length: 6 }, () => {
+    const x = 0.1 + rng() * 0.8, y = 0.1 + rng() * 0.8;
+    return { x, y, vx: 0, vy: 0, trail: [] };
+  });
+  const L = makeLearners(drones.length, 2.2, 0.3);
+  const p: SwarmParams = { kPh: 2.2, kSep: 0.3, rSep: 0.09, maxV: 0.012, dt: 1 };
+  let prev = Infinity, maxIncrease = 0, windows = 0;
+  for (let s = 0; s < 1200; s++) {
+    swarmStep(drones, beacons, p, L);
+    learnStep(drones, beacons, L, rng);
+    if (L[0].bestFit < Infinity) {
+      if (prev < Infinity && L[0].bestFit - prev > maxIncrease) maxIncrease = L[0].bestFit - prev;
+      prev = L[0].bestFit;
+      windows++;
+    }
+  }
+  return { maxIncrease, windows, finalFit: prev, ms: performance.now() - t0 };
 }

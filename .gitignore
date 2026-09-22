@@ -17,6 +17,7 @@ checkpoint.bin
 # scratch de session (fichiers pointés)
 .*
 !.gitignore
+!.github
 
 # sorties de bench / logs
 o*.txt

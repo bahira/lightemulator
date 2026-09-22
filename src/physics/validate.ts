@@ -30,7 +30,7 @@ import {
   FUSED_SILICA, BK7, sellmeier, gdd, zeroDispersionLambda,
   pulseWidthGDD, pulsePropagation, fresnelBiaxial,
 } from './optics';
-import { phototaxisError, trilaterationError, friisError } from './drones';
+import { phototaxisError, trilaterationError, friisError, learningMonotonicity } from './drones';
 
 export interface TestResult {
   group: string;
@@ -74,7 +74,7 @@ export type TestId =
   | 'fep-gradient'
   | 'ctrl-ik' | 'ctrl-traj' | 'ctrl-vdot' | 'ctrl-stab'
   | 'opt-sellmeier' | 'opt-gdd' | 'opt-pulse' | 'opt-fresnel'
-  | 'drone-phototaxie' | 'drone-trilateration' | 'drone-link';
+  | 'drone-phototaxie' | 'drone-trilateration' | 'drone-link' | 'drone-apprentissage';
 
 export const TEST_ORDER: TestId[] = [
   'fft-roundtrip', 'fft-parseval', 'fft-tone',
@@ -85,7 +85,7 @@ export const TEST_ORDER: TestId[] = [
   'fep-gradient',
   'ctrl-ik', 'ctrl-traj', 'ctrl-vdot', 'ctrl-stab',
   'opt-sellmeier', 'opt-gdd', 'opt-pulse', 'opt-fresnel',
-  'drone-phototaxie', 'drone-trilateration', 'drone-link',
+  'drone-phototaxie', 'drone-trilateration', 'drone-link', 'drone-apprentissage',
 ];
 
 export function runTest(id: TestId): TestResult {
@@ -108,6 +108,13 @@ export function runTest(id: TestId): TestResult {
       return mk('Drones', 'Budget de liaison (Friis)', 'La puissance reçue suit l’inverse-square',
         'Pr(2d) = Pr(d)/4 exactement, sur 40 distances de 0,15 à 2,1 m',
         v.rel, 1e-12, ms);
+    }
+    case 'drone-apprentissage': {
+      const { v, ms } = timed(() => learningMonotonicity());
+      return mk('Drones', 'Apprentissage (1+1-ES) — monotonie de l’élitisme',
+        'L’apprentissage en ligne ne dégrade jamais la fitness incumbent',
+        'bestFit monotone non-croissante sur 1200 pas, 6 drones, 2 balises hétérogènes',
+        v.maxIncrease, 1e-12, ms, `${v.windows} fenêtres évaluées · fitness finale ${v.finalFit.toExponential(2)}`);
     }
 
     // ---- FFT ---------------------------------------------------------------

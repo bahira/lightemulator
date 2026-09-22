@@ -6,13 +6,25 @@ Merci de votre intérêt. Ce projet tient par une règle : **chaque chiffre est 
 
 Toute contribution qui ajoute une affirmation numérique doit l'accompagner d'une **référence indépendante** : solution analytique, loi de conservation, énumération exhaustive ou différences finies — voir `src/physics/validate.ts`. Un résultat sans vérification ne sera pas fusionné.
 
-## En pratique
+## En pratique — démarrage rapide (première PR en 15 min)
+
+```bash
+git clone https://github.com/<ton-fork>/lightemulator && cd lightemulator
+npm install
+npm run test          # 29 tests grounded — doit être vert
+npx tsc --noEmit      # TypeScript strict — doit être vert
+npm run dev           # http://localhost:5173
+```
+
+Première contribution idéale : une issue `good first issue` (le drag des balises était le prototype — fermé, regarde le diff comme modèle).
+
+## Le workflow complet
 
 1. **Fork + branche** : `git checkout -b feat/mon-truc`
 2. **Physique pure** : tout nouveau module dans `src/physics/` doit être TypeScript pur, zéro dépendance — copiez le fichier, il marche.
 3. **Test obligatoire** : ajoutez un test dans `src/physics/validate.ts` (groupe + tolérance), il apparaît dans `npm run test` et dans l'onglet Validation.
 4. **TypeScript strict** : `npx tsc --noEmit` doit passer.
-5. **Boucle grounded verte** : `npm run test` — 28/28 minimum, code de sortie = nombre d'échecs.
+5. **Boucle grounded verte** : `npm run test` — 29/29 minimum, code de sortie = nombre d'échecs.
 6. **PR** : décrivez ce qui est mesuré, pas seulement ce qui est ajouté.
 
 ## Les parts honnêtes

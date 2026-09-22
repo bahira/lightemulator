@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useMemo } from 'react';
 import {
-  lightField, swarmStep, friisReceived, meanNearestDist,
-  type Beacon, type Drone, type SwarmParams,
+  lightField, swarmStep, learnStep, makeLearners, friisReceived, meanNearestDist, rng32,
+  type Beacon, type Drone, type SwarmParams, type LearnerState,
 } from '../physics/drones';
 import { Panel, Stat, Slider, Btn, Tag, Formula, Segmented, useCanvas, axisLabel } from '../ui/kit';
 
@@ -50,12 +50,16 @@ export default function DroneLab() {
   const [kSep, setKSep] = useState(0.35);
   const [mode, setMode] = useState<ModeId>('essaim');
   const [playing, setPlaying] = useState(true);
+  const [learning, setLearning] = useState(false);
   const [seed, setSeed] = useState(42);
   const [tick, setTick] = useState(0);
   const [steps, setSteps] = useState(0);
 
   const beaconsRef = useRef<Beacon[]>(makeBeacons(seed));
   const dronesRef = useRef<Drone[]>(makeDrones(n, seed));
+  const learnersRef = useRef<LearnerState[]>(makeLearners(n));
+  const dragRef = useRef(-1); // index de la balise en cours de drag (-1 = aucun)
+  const learnRngRef = useRef<() => number>(rng32(77));
 
   const params = useMemo<SwarmParams>(
     () => ({ kPh: 2.2, kSep: mode === 'essaim' ? kSep : 0, rSep: 0.09, maxV, dt: 1 }),
@@ -63,22 +67,26 @@ export default function DroneLab() {
   );
 
   // reseed / resize → rebuild (garde les balises si seulement n change)
-  useEffect(() => { dronesRef.current = makeDrones(n, seed); setSteps(0); }, [n, seed]);
+  useEffect(() => { dronesRef.current = makeDrones(n, seed); learnersRef.current = makeLearners(n); setSteps(0); }, [n, seed]);
   useEffect(() => { beaconsRef.current = makeBeacons(seed); setSteps(0); }, [seed]);
 
-  // boucle d'animation : physique + horloge
+  // boucle d'animation : physique + apprentissage + horloge
   useEffect(() => {
     if (!playing) return;
     let id = 0, frame = 0;
+    const rng = learnRngRef.current;
     const loop = () => {
-      swarmStep(dronesRef.current, beaconsRef.current, params);
+      if (learning) {
+        learnStep(dronesRef.current, beaconsRef.current, learnersRef.current, rng);
+      }
+      swarmStep(dronesRef.current, beaconsRef.current, params, learning ? learnersRef.current : undefined);
       if (++frame % 4 === 0) setSteps((s) => s + 4);
       setTick((t) => t + 1);
       id = requestAnimationFrame(loop);
     };
     id = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(id);
-  }, [playing, params]);
+  }, [playing, params, learning]);
 
   // télémétrie dérivée (par frame de rendu)
   const telemetry = useMemo(() => {
@@ -98,7 +106,10 @@ export default function DroneLab() {
       if (r < nd) { nd = r; nearest = b; }
     }
     const pr = friisReceived(PT_W * nearest.power, IR_LAMBDA, Math.max(nd, 1e-6) * ROOM);
-    return { mean, converged, pr, nd: nd * ROOM };
+    const L = learnersRef.current;
+    const kPhMean = L.reduce((a, l) => a + l.kPh, 0) / Math.max(L.length, 1);
+    const kSepSpread = Math.max(...L.map((l) => l.bestKSep)) - Math.min(...L.map((l) => l.bestKSep));
+    return { mean, converged, pr, nd: nd * ROOM, kPhMean, kSepSpread };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick]);
 
@@ -208,6 +219,34 @@ export default function DroneLab() {
 
   const maxSensor = Math.max(...sensors, 1e-12);
 
+  // ------------------------------------------------------- drag des balises (#1)
+  const canvasToArena = (e: React.PointerEvent<HTMLCanvasElement>): { x: number; y: number } => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const S = Math.min(rect.width, view.size.h) - 24;
+    const ox = (rect.width - S) / 2, oy = (view.size.h - S) / 2;
+    return {
+      x: Math.min(1, Math.max(0, (e.clientX - rect.left - ox) / S)),
+      y: Math.min(1, Math.max(0, 1 - (e.clientY - rect.top - oy) / S)),
+    };
+  };
+  const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const p = canvasToArena(e);
+    let best = -1, bd = 0.07;
+    beaconsRef.current.forEach((b, i) => {
+      const r = Math.hypot(b.x - p.x, b.y - p.y);
+      if (r < bd) { bd = r; best = i; }
+    });
+    dragRef.current = best;
+    if (best >= 0) e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (dragRef.current < 0) return;
+    const p = canvasToArena(e);
+    beaconsRef.current[dragRef.current].x = p.x;
+    beaconsRef.current[dragRef.current].y = p.y;
+  };
+  const onPointerUp = () => { dragRef.current = -1; };
+
   return (
     <div className="grid gap-3 xl:grid-cols-[1fr_320px]">
       {/* ------------------------------------------------------------- vue */}
@@ -219,7 +258,11 @@ export default function DroneLab() {
         flush
       >
         <div className="p-3.5">
-          <div className="w-full"><canvas ref={view.ref} style={{ width: '100%', height: view.size.h }} className="block" /></div>
+          <div className="w-full"><canvas
+            ref={view.ref} style={{ width: '100%', height: view.size.h }} className="block cursor-grab active:cursor-grabbing"
+            title="clique-glisse une balise ambrée — les drones suivent la lumière"
+            onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={onPointerUp}
+          /></div>
         </div>
       </Panel>
 
@@ -232,6 +275,10 @@ export default function DroneLab() {
                 {playing ? '⏸ pause' : '▶ envol'}
               </Btn>
               <Btn onClick={() => setSeed((s) => s + 1)} title="repositionne balises + drones">↺ balises</Btn>
+              <Btn tone={learning ? 'primary' : 'default'} onClick={() => setLearning(!learning)}
+                title="chaque drone ajuste ses gains par (1+1)-ES élitiste — fitness jamais dégradée">
+                {learning ? '✓ apprentissage' : 'apprentissage'}
+              </Btn>
             </div>
             <Slider label="Drones" value={n} min={2} max={60} step={1} onChange={(v) => setNStr(String(v))} />
             <Slider label="Vitesse max" value={maxV} min={0.004} max={0.03} step={0.001} onChange={setMaxV} format={(v) => (v * ROOM * 100).toFixed(1)} unit=" cm/s" />
@@ -246,6 +293,8 @@ export default function DroneLab() {
             <Stat label="convergence" value={`${Math.round((100 * telemetry.converged) / n)}%`} tone="green" hint={`${telemetry.converged}/${n} drones à < 0,3 m`} />
             <Stat label="Pr drone 0" value={(telemetry.pr * 1e12).toFixed(3)} unit="pW" tone="amber" hint="Friis : Pt·G·λ²/(4πd)²" />
             <Stat label="d drone 0" value={telemetry.nd.toFixed(3)} unit="m" hint="vers la balise la plus proche" />
+            <Stat label="kPh appris" value={telemetry.kPhMean.toFixed(2)} tone={learning ? 'violet' : 'slate'} hint={`écart bestKSep = ${telemetry.kSepSpread.toFixed(2)}${learning ? ' · (1+1-ES élitiste' : ' · gains fixes'}`} />
+            <Stat label="apprentissage" value={<Tag tone={learning ? 'green' : 'slate'}>{learning ? 'ACTIF' : 'OFF'}</Tag>} mono={false} hint="bestFit jamais dégradée (garantie)" />
           </div>
         </Panel>
 

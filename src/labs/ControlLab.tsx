@@ -406,6 +406,7 @@ const PATHS = [
   { id: 'cercle', label: 'Cercle', title: 'segments D ≈ 0,12 m > D_crz — régime palier (7 segments complets)' },
   { id: 'ligne', label: 'Ligne', title: 'segments D ≈ 0,04 m < D_sat — régime réduit (profil triangulaire jerk)' },
   { id: 'huit', label: 'Huit', title: 'lemniscate de Gerono — les deux régimes se mélangent' },
+  { id: 'custom', label: 'Custom', title: 'clique sur le canvas pour placer le prochain waypoint — replanification exacte' },
 ] as const;
 type PathId = (typeof PATHS)[number]['id'];
 const N_WP = 20;
@@ -431,17 +432,24 @@ function RobotTrackPanel() {
   const [playing, setPlaying] = useState(true);
   const [tick, setTick] = useState(0);
 
-  const wps = useMemo(() => Array.from({ length: N_WP }, (_, i) => pathPoint(shape, i / N_WP)), [shape]);
+  const wps = useMemo(() => Array.from({ length: N_WP }, (_, i) => pathPoint(shape === 'custom' ? 'cercle' : shape, i / N_WP)), [shape]);
 
   // état d'exécution dans des refs — muté par la boucle rAF, zéro re-render
   const segRef = useRef(0);
   const tauRef = useRef(0);
   const planRef = useRef(segmentPlan(wps, 0));
   const trailRef = useRef<number[]>([]);
+  const segBaseRef = useRef(wps[0]);
+  const segTargetRef = useRef(wps[1]);
+  const lastEndRef = useRef(wps[0]);
+  const queueRef = useRef<{ x: number; z: number }[]>([]); // waypoints custom (#3)
 
   useEffect(() => {
     segRef.current = 0; tauRef.current = 0; trailRef.current = [];
+    queueRef.current = [];
     planRef.current = segmentPlan(wps, 0);
+    segBaseRef.current = wps[0]; segTargetRef.current = wps[1];
+    lastEndRef.current = wps[0];
   }, [wps]);
 
   useEffect(() => {
@@ -451,26 +459,39 @@ function RobotTrackPanel() {
       tauRef.current += 0.016 * speed;
       if (tauRef.current >= planRef.current.duration) {
         tauRef.current = 0;
-        segRef.current = (segRef.current + 1) % N_WP;
-        planRef.current = segmentPlan(wps, segRef.current);
+        if (shape === 'custom' && queueRef.current.length) {
+          // #3 : waypoint cliqué — replanification exacte depuis l'effecteur
+          const base = lastEndRef.current;
+          const tgt = queueRef.current.shift()!;
+          segBaseRef.current = base; segTargetRef.current = tgt;
+          planRef.current = planProfile({ D: Math.hypot(tgt.x - base.x, tgt.z - base.z), vmax: RVMAX, amax: RAMAX, jmax: RJMAX });
+        } else {
+          segRef.current = (segRef.current + 1) % N_WP;
+          const a = wps[segRef.current], b = wps[(segRef.current + 1) % N_WP];
+          segBaseRef.current = a; segTargetRef.current = b;
+          planRef.current = segmentPlan(wps, segRef.current);
+        }
       }
       // trace du point terminal
       const plan = planRef.current, st = profileState(plan, tauRef.current);
-      const a = wps[segRef.current], b = wps[(segRef.current + 1) % N_WP];
+      const a = segBaseRef.current, b = segTargetRef.current;
       const D = Math.hypot(b.x - a.x, b.z - a.z) || 1;
-      trailRef.current.push(a.x + ((b.x - a.x) / D) * st.x, a.z + ((b.z - a.z) / D) * st.x);
+      const ex = a.x + ((b.x - a.x) / D) * st.x;
+      const ez = a.z + ((b.z - a.z) / D) * st.x;
+      lastEndRef.current = { x: ex, z: ez };
+      trailRef.current.push(ex, ez);
       if (trailRef.current.length > 400) trailRef.current.splice(0, trailRef.current.length - 400);
       setTick((t) => t + 1);
       id = requestAnimationFrame(loop);
     };
     id = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(id);
-  }, [playing, speed, wps]);
+  }, [playing, speed, wps, shape]);
 
   // état courant (par frame de rendu)
   const live = useMemo(() => {
     const plan = planRef.current, st = profileState(plan, tauRef.current);
-    const a = wps[segRef.current], b = wps[(segRef.current + 1) % N_WP];
+    const a = segBaseRef.current, b = segTargetRef.current;
     const D = Math.hypot(b.x - a.x, b.z - a.z) || 1;
     const ex = a.x + ((b.x - a.x) / D) * st.x;
     const ez = a.z + ((b.z - a.z) / D) * st.x;
@@ -480,11 +501,12 @@ function RobotTrackPanel() {
       ex, ez, pose, st, seg: segRef.current,
       err: fk ? Math.hypot(fk.x - ex, fk.z - ez) : NaN,
       v: st.v, a: st.a, T: plan.duration, regime: plan.regime,
+      queued: queueRef.current.length,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tick, wps]);
 
-  const { ref } = useCanvas((ctx, w, h) => {
+  const { ref, size } = useCanvas((ctx, w, h) => {
     const scale = Math.min(w / 1.2, h / 0.95);
     const ox = w / 2, oy = h * 0.68;
     const px = (x: number) => ox + x * scale;
@@ -495,16 +517,34 @@ function RobotTrackPanel() {
     ctx.setLineDash([3, 5]);
     ctx.beginPath(); ctx.arc(px(0), py(0), (RL1 + RL2) * scale, 0, 2 * Math.PI); ctx.stroke();
     ctx.setLineDash([]);
-    // trajectoire cible (points way)
-    ctx.strokeStyle = 'rgba(251,191,36,0.45)';
-    ctx.setLineDash([3, 4]);
-    ctx.beginPath();
-    for (let i = 0; i <= N_WP; i++) {
-      const p = pathPoint(shape, (i % N_WP) / N_WP);
-      if (i === 0) ctx.moveTo(px(p.x), py(p.z)); else ctx.lineTo(px(p.x), py(p.z));
+    // trajectoire cible (points way) — masquée en mode custom (pas de trajectoire prédéfinie)
+    if (shape !== 'custom') {
+      ctx.strokeStyle = 'rgba(251,191,36,0.45)';
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      for (let i = 0; i <= N_WP; i++) {
+        const p = pathPoint(shape, (i % N_WP) / N_WP);
+        if (i === 0) ctx.moveTo(px(p.x), py(p.z)); else ctx.lineTo(px(p.x), py(p.z));
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    } else {
+      // #3 : file de waypoints cliqués
+      const q = queueRef.current;
+      if (q.length) {
+        ctx.strokeStyle = 'rgba(251,191,36,0.4)';
+        ctx.setLineDash([2, 4]);
+        ctx.beginPath();
+        ctx.moveTo(px(live.ex), py(live.ez));
+        for (const p of q) ctx.lineTo(px(p.x), py(p.z));
+        ctx.stroke();
+        ctx.setLineDash([]);
+        for (const p of q) {
+          ctx.beginPath(); ctx.arc(px(p.x), py(p.z), 3.5, 0, 2 * Math.PI);
+          ctx.fillStyle = 'rgba(251,191,36,0.8)'; ctx.fill();
+        }
+      }
     }
-    ctx.stroke();
-    ctx.setLineDash([]);
     // trail exécuté
     const T = trailRef.current.length / 2;
     if (T >= 2) {
@@ -533,16 +573,34 @@ function RobotTrackPanel() {
     // effecteur + prochain waypont
     ctx.fillStyle = '#34d399';
     ctx.beginPath(); ctx.arc(px(L.ex), py(L.ez), 4.5, 0, 2 * Math.PI); ctx.fill();
-    const b = wps[(L.seg + 1) % N_WP];
+    const nextTgt = shape === 'custom'
+      ? (queueRef.current[0] ?? lastEndRef.current)
+      : wps[(L.seg + 1) % N_WP];
     ctx.strokeStyle = 'rgba(251,191,36,0.95)'; ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(px(b.x) - 7, py(b.z)); ctx.lineTo(px(b.x) + 7, py(b.z));
-    ctx.moveTo(px(b.x), py(b.z) - 7); ctx.lineTo(px(b.x), py(b.z) + 7);
+    ctx.moveTo(px(nextTgt.x) - 7, py(nextTgt.z)); ctx.lineTo(px(nextTgt.x) + 7, py(nextTgt.z));
+    ctx.moveTo(px(nextTgt.x), py(nextTgt.z) - 7); ctx.lineTo(px(nextTgt.x), py(nextTgt.z) + 7);
     ctx.stroke();
     ctx.lineWidth = 1;
-    axisLabel(ctx, `waypoint ${(L.seg + 1) % N_WP}/${N_WP} · T = ${L.T.toFixed(2)} s · régime ${L.regime}`, 6, 12, 'left');
+    axisLabel(ctx, shape === 'custom'
+      ? `file : ${L.queued} waypoint(s) · T = ${L.T.toFixed(2)} s · régime ${L.regime}`
+      : `waypoint ${(L.seg + 1) % N_WP}/${N_WP} · T = ${L.T.toFixed(2)} s · régime ${L.regime}`, 6, 12, 'left');
     axisLabel(ctx, `v = ${L.v.toFixed(3)} m/s · a = ${L.a.toFixed(2)} m/s²`, w - 6, 12, 'right', 'rgba(103,232,249,0.95)');
   }, [tick, live, shape], 0.5);
+
+  // #3 : clic = prochain waypoint (mode custom uniquement)
+  const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (shape !== 'custom') return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const scale = Math.min(rect.width / 1.2, size.h / 0.95);
+    const ox = rect.width / 2, oy = size.h * 0.68;
+    let x = (e.clientX - rect.left - ox) / scale;
+    let z = (oy - (e.clientY - rect.top)) / scale;
+    // clamp dans la portée
+    const r = Math.hypot(x, z);
+    if (r > (RL1 + RL2) * 0.96) { const c = ((RL1 + RL2) * 0.96) / r; x *= c; z *= c; }
+    if (queueRef.current.length < 30) queueRef.current.push({ x, z });
+  };
 
   return (
     <Panel
@@ -552,7 +610,7 @@ function RobotTrackPanel() {
       right={<Tag tone={playing ? 'green' : 'slate'}>{playing ? 'EN MOUVEMENT' : 'EN PAUSE'}</Tag>}
       flush
     >
-      <canvas ref={ref} className="block w-full" style={{ aspectRatio: '2.4 / 1' }} />
+      <canvas ref={ref} onClick={onClick} className="block w-full" style={{ aspectRatio: '2.4 / 1', cursor: shape === 'custom' ? 'crosshair' : undefined }} />
       <div className="space-y-3 border-t border-white/5 p-3.5">
         <div className="grid gap-x-4 gap-y-2 sm:grid-cols-3">
           <Segmented
@@ -565,7 +623,7 @@ function RobotTrackPanel() {
             <Btn tone={playing ? 'danger' : 'primary'} onClick={() => setPlaying(!playing)}>
               {playing ? '⏸ pause' : '▶ démarrer'}
             </Btn>
-            <Btn onClick={() => { trailRef.current = []; segRef.current = 0; tauRef.current = 0; }} title="efface la trace">↺ trace</Btn>
+            <Btn onClick={() => { trailRef.current = []; segRef.current = 0; tauRef.current = 0; queueRef.current = []; }} title="efface la trace + la file">↺ trace</Btn>
           </div>
         </div>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
