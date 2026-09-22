@@ -7,6 +7,7 @@
 [![tests](https://img.shields.io/badge/tests-25%2F25-brightgreen)]() [![parity](https://img.shields.io/badge/kernel%20parity-6%2F6-brightgreen)]() [![gradcheck](https://img.shields.io/badge/gradcheck-PASS-brightgreen)]() [![license](https://img.shields.io/badge/license-MIT-blue)]()
 
 **[🔬 Live verification page →](https://bahira.github.io/lightemulator/)** — run the kernels in your browser, watch the receipts appear.
+**[🎮 Full emulator demo →](https://bahira.github.io/lightemulator/demo.html)** — the 9 labs, running client-side, no install.
 
 </div>
 
