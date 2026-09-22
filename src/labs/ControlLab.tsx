@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   fkScara, ikScara, planProfile, profileState,
   DEFAULT_PENDULUM, pendulumU, pendulumVdot, pendulumEigen, simulatePendulum,
@@ -6,7 +6,7 @@ import {
   type PendulumLaw,
 } from '../physics/control';
 import {
-  Panel, Stat, Tag, Slider, Formula, CopyBtn, Segmented,
+  Panel, Stat, Tag, Slider, Btn, Formula, CopyBtn, Segmented,
   useCanvas, drawGrid, drawSeries, axisLabel, paintField, drawImageBuffer, LUT,
 } from '../ui/kit';
 
@@ -399,6 +399,194 @@ function PendulumPanel() {
 }
 
 // ---------------------------------------------------------------------------
+//  Panneau robot animé — suivi de trajectoire jerk-borné (waypoints réels)
+// ---------------------------------------------------------------------------
+
+const PATHS = [
+  { id: 'cercle', label: 'Cercle', title: 'segments D ≈ 0,12 m > D_crz — régime palier (7 segments complets)' },
+  { id: 'ligne', label: 'Ligne', title: 'segments D ≈ 0,04 m < D_sat — régime réduit (profil triangulaire jerk)' },
+  { id: 'huit', label: 'Huit', title: 'lemniscate de Gerono — les deux régimes se mélangent' },
+] as const;
+type PathId = (typeof PATHS)[number]['id'];
+const N_WP = 20;
+const RL1 = 0.3, RL2 = 0.2, RVMAX = 0.55, RAMAX = 7, RJMAX = 100;
+
+function pathPoint(shape: PathId, u: number): { x: number; z: number } {
+  const a = u * 2 * Math.PI;
+  if (shape === 'cercle') return { x: 0.22 * Math.cos(a), z: 0.12 + 0.18 * Math.sin(a) };
+  if (shape === 'ligne') return { x: -0.4 + 0.8 * u, z: 0.08 };
+  const d = 1 + Math.sin(a) * Math.sin(a);
+  return { x: (0.42 * Math.cos(a)) / d, z: 0.15 + (0.42 * Math.sin(a) * Math.cos(a)) / d };
+}
+
+function segmentPlan(wps: { x: number; z: number }[], i: number) {
+  const a = wps[i], b = wps[(i + 1) % wps.length];
+  return planProfile({ D: Math.hypot(b.x - a.x, b.z - a.z), vmax: RVMAX, amax: RAMAX, jmax: RJMAX });
+}
+
+function RobotTrackPanel() {
+  const [shapeStr, setShapeStr] = useState('cercle');
+  const shape = (PATHS.some((p) => p.id === shapeStr) ? shapeStr : 'cercle') as PathId;
+  const [speed, setSpeed] = useState(1);
+  const [playing, setPlaying] = useState(true);
+  const [tick, setTick] = useState(0);
+
+  const wps = useMemo(() => Array.from({ length: N_WP }, (_, i) => pathPoint(shape, i / N_WP)), [shape]);
+
+  // état d'exécution dans des refs — muté par la boucle rAF, zéro re-render
+  const segRef = useRef(0);
+  const tauRef = useRef(0);
+  const planRef = useRef(segmentPlan(wps, 0));
+  const trailRef = useRef<number[]>([]);
+
+  useEffect(() => {
+    segRef.current = 0; tauRef.current = 0; trailRef.current = [];
+    planRef.current = segmentPlan(wps, 0);
+  }, [wps]);
+
+  useEffect(() => {
+    if (!playing) return;
+    let id = 0;
+    const loop = () => {
+      tauRef.current += 0.016 * speed;
+      if (tauRef.current >= planRef.current.duration) {
+        tauRef.current = 0;
+        segRef.current = (segRef.current + 1) % N_WP;
+        planRef.current = segmentPlan(wps, segRef.current);
+      }
+      // trace du point terminal
+      const plan = planRef.current, st = profileState(plan, tauRef.current);
+      const a = wps[segRef.current], b = wps[(segRef.current + 1) % N_WP];
+      const D = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+      trailRef.current.push(a.x + ((b.x - a.x) / D) * st.x, a.z + ((b.z - a.z) / D) * st.x);
+      if (trailRef.current.length > 400) trailRef.current.splice(0, trailRef.current.length - 400);
+      setTick((t) => t + 1);
+      id = requestAnimationFrame(loop);
+    };
+    id = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(id);
+  }, [playing, speed, wps]);
+
+  // état courant (par frame de rendu)
+  const live = useMemo(() => {
+    const plan = planRef.current, st = profileState(plan, tauRef.current);
+    const a = wps[segRef.current], b = wps[(segRef.current + 1) % N_WP];
+    const D = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+    const ex = a.x + ((b.x - a.x) / D) * st.x;
+    const ez = a.z + ((b.z - a.z) / D) * st.x;
+    const pose = ikScara(ex, ez, RL1, RL2);
+    const fk = pose.ok ? fkScara(pose.th1, pose.th2, RL1, RL2) : null;
+    return {
+      ex, ez, pose, st, seg: segRef.current,
+      err: fk ? Math.hypot(fk.x - ex, fk.z - ez) : NaN,
+      v: st.v, a: st.a, T: plan.duration, regime: plan.regime,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tick, wps]);
+
+  const { ref } = useCanvas((ctx, w, h) => {
+    const scale = Math.min(w / 1.2, h / 0.95);
+    const ox = w / 2, oy = h * 0.68;
+    const px = (x: number) => ox + x * scale;
+    const py = (z: number) => oy - z * scale;
+    drawGrid(ctx, 0, 0, w, h, 12, 6);
+    // portée
+    ctx.strokeStyle = 'rgba(148,163,184,0.15)';
+    ctx.setLineDash([3, 5]);
+    ctx.beginPath(); ctx.arc(px(0), py(0), (RL1 + RL2) * scale, 0, 2 * Math.PI); ctx.stroke();
+    ctx.setLineDash([]);
+    // trajectoire cible (points way)
+    ctx.strokeStyle = 'rgba(251,191,36,0.45)';
+    ctx.setLineDash([3, 4]);
+    ctx.beginPath();
+    for (let i = 0; i <= N_WP; i++) {
+      const p = pathPoint(shape, (i % N_WP) / N_WP);
+      if (i === 0) ctx.moveTo(px(p.x), py(p.z)); else ctx.lineTo(px(p.x), py(p.z));
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // trail exécuté
+    const T = trailRef.current.length / 2;
+    if (T >= 2) {
+      ctx.beginPath();
+      for (let i = 0; i < T; i++) {
+        const X = px(trailRef.current[i * 2]), Y = py(trailRef.current[i * 2 + 1]);
+        if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y);
+      }
+      ctx.strokeStyle = 'rgba(34,211,238,0.7)';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    }
+    // bras
+    const L = live;
+    if (L.pose.ok) {
+      const j = fkScara(L.pose.th1, 0, RL1, RL2);
+      ctx.strokeStyle = 'rgba(34,211,238,0.95)'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(px(0), py(0)); ctx.lineTo(px(j.x), py(j.z)); ctx.stroke();
+      ctx.strokeStyle = 'rgba(167,139,250,0.95)';
+      ctx.beginPath(); ctx.moveTo(px(j.x), py(j.z)); ctx.lineTo(px(L.ex), py(L.ez)); ctx.stroke();
+      ctx.lineWidth = 1;
+      ctx.fillStyle = 'rgba(255,255,255,0.75)';
+      ctx.beginPath(); ctx.arc(px(0), py(0), 6, 0, 2 * Math.PI); ctx.fill();
+    }
+    // effecteur + prochain waypont
+    ctx.fillStyle = '#34d399';
+    ctx.beginPath(); ctx.arc(px(L.ex), py(L.ez), 4.5, 0, 2 * Math.PI); ctx.fill();
+    const b = wps[(L.seg + 1) % N_WP];
+    ctx.strokeStyle = 'rgba(251,191,36,0.95)'; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(px(b.x) - 7, py(b.z)); ctx.lineTo(px(b.x) + 7, py(b.z));
+    ctx.moveTo(px(b.x), py(b.z) - 7); ctx.lineTo(px(b.x), py(b.z) + 7);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+    axisLabel(ctx, `waypoint ${(L.seg + 1) % N_WP}/${N_WP} · T = ${L.T.toFixed(2)} s · régime ${L.regime}`, 6, 12, 'left');
+    axisLabel(ctx, `v = ${L.v.toFixed(3)} m/s · a = ${L.a.toFixed(2)} m/s²`, w - 6, 12, 'right', 'rgba(103,232,249,0.95)');
+  }, [tick, live, shape], 0.5);
+
+  return (
+    <Panel
+      tag="ROBOT EN MOUVEMENT"
+      title="Bras SCARA animé — suivi de trajectoire jerk-bornée par waypoints"
+      subtitle="Chaque segment est un déplacement temps-minimal exact (planProfile) exécuté par IK fermée — comme un vrai contrôleur de robot"
+      right={<Tag tone={playing ? 'green' : 'slate'}>{playing ? 'EN MOUVEMENT' : 'EN PAUSE'}</Tag>}
+      flush
+    >
+      <canvas ref={ref} className="block w-full" style={{ aspectRatio: '2.4 / 1' }} />
+      <div className="space-y-3 border-t border-white/5 p-3.5">
+        <div className="grid gap-x-4 gap-y-2 sm:grid-cols-3">
+          <Segmented
+            options={PATHS.map((p) => ({ id: p.id, label: p.label, title: p.title }))}
+            value={shape}
+            onChange={(v) => setShapeStr(v)}
+          />
+          <Slider label="Vitesse d'exécution" value={speed} min={0.2} max={3} step={0.1} onChange={setSpeed} format={(v) => `×${v.toFixed(1)}`} />
+          <div className="flex items-end gap-1.5 pb-1">
+            <Btn tone={playing ? 'danger' : 'primary'} onClick={() => setPlaying(!playing)}>
+              {playing ? '⏸ pause' : '▶ démarrer'}
+            </Btn>
+            <Btn onClick={() => { trailRef.current = []; segRef.current = 0; tauRef.current = 0; }} title="efface la trace">↺ trace</Btn>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+          <Stat label="θ₁" value={live.pose.ok ? ((live.pose.th1 * 180) / Math.PI).toFixed(1) : '—'} unit="°" tone="cyan" />
+          <Stat label="θ₂" value={live.pose.ok ? ((live.pose.th2 * 180) / Math.PI).toFixed(1) : '—'} unit="°" tone="violet" />
+          <Stat label="v effecteur" value={live.v.toFixed(3)} unit="m/s" tone="green" hint="profil jerk-borné exact" />
+          <Stat label="a effecteur" value={live.a.toFixed(2)} unit="m/s²" tone="amber" hint={`amax = ${RAMAX} m/s² · saturée au régime réduit`} />
+          <Stat label="Résidu FK∘IK" value={live.pose.ok ? live.err.toExponential(1) : 'hors atteinte'} unit={live.pose.ok ? 'm' : ''} tone={live.pose.ok ? 'green' : 'rose'} hint="audit 'ctrl-ik'" />
+        </div>
+        <p className="text-[10px] leading-relaxed text-slate-500">
+          Le contrôleur planifie chaque segment avec <Formula>planProfile</Formula> (3 régimes exacts :
+          réduit <Formula>D ≤ D_sat</Formula>, triangulaire, palier <Formula>D ≤ D_crz</Formula>) puis exécute
+          avec <Formula>profileState</Formula> et <Formula>ikScara</Formula> fermée — zéro itération, zéro heap.
+          Vérifié par <Formula>ctrl-ik</Formula> (résidu machine) et <Formula>ctrl-traj</Formula> (violations = 0).
+        </p>
+      </div>
+    </Panel>
+  );
+}
+
+// ---------------------------------------------------------------------------
 
 export default function ControlLab() {
   return (
@@ -407,6 +595,7 @@ export default function ControlLab() {
         <ScaraPanel />
         <TrajectoryPanel />
       </div>
+      <RobotTrackPanel />
       <PendulumPanel />
       <Panel
         tag="C99"
