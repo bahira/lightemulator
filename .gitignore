@@ -1,0 +1,32 @@
+# build / deps
+node_modules/
+dist/
+__pycache__/
+build/
+
+# binaires compilés
+*.exe
+
+# gros fichiers locaux (données + médias)
+data/
+*.mkv
+*.mp4
+*.srt
+checkpoint.bin
+
+# scratch de session (fichiers pointés)
+.*
+!.gitignore
+
+# sorties de bench / logs
+o*.txt
+e*.txt
+err.txt
+out*.txt
+results.txt
+dev.log
+CLOSETXT.txt
+.selftest.mjs
+.sweep2.mjs
+.e8.mjs
+.m.s
