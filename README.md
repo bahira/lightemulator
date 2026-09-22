@@ -64,7 +64,7 @@ The honest parts: attention tiling caps at ×1.05 wall time (Amdahl — skipped 
 
 ## The verification loop
 
-25 tests, each with a number: Parseval, power conservation, MZI unitarity, CIM vs exact optimum, spline derivatives, gradient checks, Sellmeier dispersion, Fresnel biaxial. Plus kernel parity 6/6 against libm, GEMM auto-tests (forward + backward, N%8 ≠ 0 included), and a gradient check against finite differences on every training run. See [`SPEAR_REPORT_2026-09-21.md`](SPEAR_REPORT_2026-09-21.md) for the full measured report.
+25 tests, each with a number: Parseval, power conservation, MZI unitarity, CIM vs exact optimum, spline derivatives, gradient checks, Sellmeier dispersion, Fresnel biaxial. Plus kernel parity 6/6 against libm, GEMM auto-tests (forward + backward, N%8 ≠ 0 included), and a gradient check against finite differences on every training run. See [`SPEAR_REPORT_2026-09-21.md`](SPEAR_REPORT_2026-09-21.md) for the full measured report and [`SHOWCASES.md`](SHOWCASES.md) for the complete quality showcase catalog.
 
 ---
 
