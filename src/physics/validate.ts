@@ -31,6 +31,7 @@ import {
   pulseWidthGDD, pulsePropagation, fresnelBiaxial,
 } from './optics';
 import { phototaxisError, trilaterationError, friisError, learningMonotonicity } from './drones';
+import { linearityError, avmCheckError, pnnBench } from './pnn';
 
 export interface TestResult {
   group: string;
@@ -74,7 +75,8 @@ export type TestId =
   | 'fep-gradient'
   | 'ctrl-ik' | 'ctrl-traj' | 'ctrl-vdot' | 'ctrl-stab'
   | 'opt-sellmeier' | 'opt-gdd' | 'opt-pulse' | 'opt-fresnel'
-  | 'drone-phototaxie' | 'drone-trilateration' | 'drone-link' | 'drone-apprentissage';
+  | 'drone-phototaxie' | 'drone-trilateration' | 'drone-link' | 'drone-apprentissage'
+  | 'pnn-linearity' | 'pnn-grad' | 'pnn-train';
 
 export const TEST_ORDER: TestId[] = [
   'fft-roundtrip', 'fft-parseval', 'fft-tone',
@@ -86,6 +88,7 @@ export const TEST_ORDER: TestId[] = [
   'ctrl-ik', 'ctrl-traj', 'ctrl-vdot', 'ctrl-stab',
   'opt-sellmeier', 'opt-gdd', 'opt-pulse', 'opt-fresnel',
   'drone-phototaxie', 'drone-trilateration', 'drone-link', 'drone-apprentissage',
+  'pnn-linearity', 'pnn-grad', 'pnn-train',
 ];
 
 export function runTest(id: TestId): TestResult {
@@ -115,6 +118,28 @@ export function runTest(id: TestId): TestResult {
         'L’apprentissage en ligne ne dégrade jamais la fitness incumbent',
         'bestFit monotone non-croissante sur 1200 pas, 6 drones, 2 balises hétérogènes',
         v.maxIncrease, 1e-12, ms, `${v.windows} fenêtres évaluées · fitness finale ${v.finalFit.toExponential(2)}`);
+    }
+    case 'pnn-linearity': {
+      const { v, ms } = timed(() => linearityError());
+      return mk('PNN', 'Superposition N+C — linéarité exacte',
+        'Les champs de tous les échantillons sont reconstruits de N champs de base par combinaison linéaire exacte',
+        'Superposition vs calcul direct (12 échantillons aléatoires) + additivité E(a+b) = E(a)+E(b)',
+        Math.max(v.rel, v.worstAdd), 1e-12, ms, `émulation du trick « N+C » de Nat. Com. 17, 1059 (2026)`);
+    }
+    case 'pnn-grad': {
+      const { v, ms } = timed(() => avmCheckError());
+      return mk('PNN', 'Gradient AVM vs différences finies',
+        'Le gradient par méthode adjointe (recouvrement avant/adjoints) est exact',
+        'AVM vs FD centrées sur tous les paramètres complexes (h=1e-6)',
+        v.relErr, 1e-4, ms, `${v.checks} paramètres vérifiés`);
+    }
+    case 'pnn-train': {
+      const { v, ms } = timed(() => pnnBench());
+      return mk('PNN', 'Entraînement — convergence sur tâche séparable',
+        'Le PNN apprend une classification linéairement séparable par gradient AVM',
+        'Précision argmax sur 40 échantillons tenus à l’écart, après 200 époques SGD momentum',
+        v.accuracy, 0.9, ms, `${v.msPerEpoch.toFixed(1)} ms/époque · coût N+C = ${v.ncRatio.toFixed(0)}× moins de simulations que L`,
+        false);
     }
 
     // ---- FFT ---------------------------------------------------------------
