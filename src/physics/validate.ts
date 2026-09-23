@@ -41,6 +41,7 @@ import {
   bsUnitarityDefect, homP11, homP20, homConservationDefect, homFromAmplitudes, homQuadratureError,
   mziClosedFormError, chshS, chshStandardAngles, chshGridMax, chshHiddenVariables,
 } from './quantum';
+import { optoMeshSvdError, optoAttnError, optoEnergyAdvantage } from './optoTransformer';
 
 export interface TestResult {
   group: string;
@@ -88,7 +89,8 @@ export type TestId =
   | 'pnn-linearity' | 'pnn-grad' | 'pnn-train'
   | 'lang-grad' | 'lang-fluctuation' | 'lang-train'
   | 'holo-fraunhofer' | 'holo-gs' | 'holo-energy'
-  | 'qo-bs' | 'qo-hom' | 'qo-chsh';
+  | 'qo-bs' | 'qo-hom' | 'qo-chsh'
+  | 'opto-svd' | 'opto-attn' | 'opto-energy';
 
 export const TEST_ORDER: TestId[] = [
   'fft-roundtrip', 'fft-parseval', 'fft-tone',
@@ -104,6 +106,7 @@ export const TEST_ORDER: TestId[] = [
   'lang-grad', 'lang-fluctuation', 'lang-train',
   'holo-fraunhofer', 'holo-gs', 'holo-energy',
   'qo-bs', 'qo-hom', 'qo-chsh',
+  'opto-svd', 'opto-attn', 'opto-energy',
 ];
 
 export function runTest(id: TestId): TestResult {
@@ -561,6 +564,29 @@ export function runTest(id: TestId): TestResult {
         '|u²−Bu+C| sur 3000 directions aléatoires · discriminant Δ≥0 partout (identité de Jacobi)',
         Math.max(worstPoly, -worstDisc), 1e-10, performance.now() - t0,
         `Δ min = ${worstDisc === 0 ? '0' : worstDisc.toExponential(1)} · coquille «=1/n²» du rapport source corrigée en «=0»`);
+    }
+
+    // ---- Opto-Transformer --------------------------------------------------
+    case 'opto-svd': {
+      const { v, ms } = timed(() => optoMeshSvdError(8));
+      return mk('Opto-Transformer', 'SVD MZI — reconstruction exacte',
+        'La décomposition SVD en maillages MZI Clements/Reck reconstruit la matrice de poids',
+        '||W − U·Σ·Vᵀ||_F sur matrice 8×8 à l’epsilon machine', v, 1e-12, ms,
+        'décomposition de Clements/Reck à 28 MZI par maillage unitaire');
+    }
+    case 'opto-attn': {
+      const { v, ms } = timed(() => optoAttnError(8, 8));
+      return mk('Opto-Transformer', 'Attention Opto-SPEAR vs référence IEEE-754',
+        'Le bloc hybride projection photonique MZI + Attention SPEAR reproduit la référence',
+        'L_∞ vs calcul numérique double précision 64-bit avec Softmax exp et GELU exacts', v, 1e-4, ms,
+        'Softmax rationnel minimax (L∞ 1.5e-5) + GELU_erf (L∞ 2.05e-5) sans transcendantes');
+    }
+    case 'opto-energy': {
+      const { v, ms } = timed(() => optoEnergyAdvantage(16, 16));
+      return mk('Opto-Transformer', 'Gain énergétique physique mesuré (Amdahl)',
+        'L’accélérateur hybride Opto-SPEAR réduit la consommation face au CMOS 7nm',
+        'Ratio E(digital 7nm MAC + SRAM) / E(Opto-SPEAR passif + ALU) ≥ 5.0×', v, 5.0, ms,
+        `gain mesuré ×${v.toFixed(2)} sur bloc Transformer complet (projections MZI à 0.18 pJ/MAC)`, false);
     }
   }
 }
