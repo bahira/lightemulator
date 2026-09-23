@@ -94,6 +94,23 @@ Lecture honnête : les trois modes perdent ~+0.02 val loss — à cette échelle
 
 ---
 
+## 2. Intégrations papiers (vérifiées)
+
+### 2.1 PNN accelerator — Nature Com. 17, 1059 (2026)
+Émulation par algèbre linéaire du PNN inverse-designed du papier (module `src/physics/pnn.ts`, TS pur zéro dépendance). Fidèlement reproduit : le trick **« N+C »** (tous les champs d'échantillons reconstruits de N champs de base par combinaison linéaire — seulement N+C simulations par époque au lieu de L) et le **gradient AVM** (recouvrement champs avant/adjoints). Le FDTD 3D n'est PAS simulé (documenté dans le header).
+- **Superposition N+C — linéarité exacte** : 2.12e-16 (epsilon machine) + additivité E(a+b) = E(a)+E(b)
+- **Gradient AVM vs FD** : 1.76e-5 (le check FD a attrapé un bug du premier candidat : λ = puissances brutes au lieu de softmaxées — corrigé)
+- **Entraînement** : 100% accuracy sur 40 échantillons tenus à l'écart (papier : 97.8% numérique MNIST / 99.1% MedNIST)
+
+### 2.2 Generative thermodynamic computing — arXiv:2506.15121 (Whitelam, LBNL)
+Simulation numérique du cadre du papier (module `src/physics/langevin.ts`, TS pur zéro dépendance) : ordinateur de Langevin (Nv+Nh unités, J2/J4, dynamique sur-amortie), entraînement par maximisation de la probabilité de la trajectoire inverse.
+- **Gradient inverse (Éqs 10-11) vs FD** : 1.13e-6 — le gradient analytique d'Onsager-Machlup est exact. Trois subtilités corrigées avant validation : le μΔt ne porte que sur ∂iV (pas sur −Δx), tout est évalué à x' = x+Δx, et l'update est **J −= α·gJ** (l'Éq 10 est −∂ln P̃/∂J — le signe inversé faisait exploser l'objectif, vérifié expérimentalement)
+- **Relation de fluctuation** ln[P₀/P̃_θ] ≈ −(ΔQ₀+ΔQθ)/(2kBT) : convergence ordre 1 confirmée (resHalf/resDt = 0.029)
+- **Entraînement (bruit gelé)** : l'objectif descend **47.85 → 46.85**, sous l'entropie du bruit pur (N/2 = 48) — l'optimiseur fonctionne
+- **Part honnête** : la génération bruit→structure à échelle réduite (64+32 unités) ne sépare pas du hasard (|Pearson| 0.17 vs 0.17) — le papier utilise 784+512 unités ; le signal d'entraînement (second ordre via les covariances cachées) est noyé dans le bruit à cette échelle. Documenté dans le header du module.
+
+---
+
 ## 3. La page live — vérification dans le navigateur
 
 **https://bahira.github.io/lightemulator/** — panneau d'instrument avec :
