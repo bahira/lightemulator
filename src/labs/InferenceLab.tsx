@@ -70,7 +70,7 @@ export default function InferenceLab() {
         pristine.current = Float64Array.from(Array.from(mem)) as unknown as Float32Array;
         pristine.current = new Float32Array(mem); // copie pristine (RESTAURE avant chaque mode)
         Ee.wasm_refresh();
-        setStatus(`270k params chargés — module 47.6 kB, zéro dépendance`);
+        setStatus(`270k params chargés — module 52.2 kB (wasm SIMD v128), zéro dépendance`);
         setReady(true);
       } catch (e: any) {
         setStatus('échec du chargement : ' + (e?.message ?? e));
@@ -111,7 +111,7 @@ export default function InferenceLab() {
       <Panel
         tag="Inference edge · WASM"
         title="Le module C compilé en wasm32 — génération depuis un vrai checkpoint"
-        subtitle="lm_main.c (trainer) compilé — main() supprimé au link, inference seule : 47.6 kB, zéro dépendance"
+        subtitle="lm_main.c (trainer) compilé wasm32-wasip1 -msimd128 — main() supprimé au link, inference seule : 52.2 kB, zéro dépendance"
         flush
       >
         <div className="space-y-3 p-3.5">
@@ -160,11 +160,11 @@ export default function InferenceLab() {
             <li>· Le <b>vrai module C</b> (trainer 270k params) compilé wasm32-wasip1 — 47.6 kB stripped, inference seule</li>
             <li>· Checkpoint réel : 800 steps sur TinyStories, val loss 3.15 (hasard 4.64) — le modèle a appris</li>
             <li>· 4 modes de quantification (FP32/E8/INT8/INT4) — même seed = comparaison appariée, restauration FP32 avant chaque mode (jamais en cascade)</li>
-            <li>· ~120 tok/s en wasm scalaire dans le navigateur — offline, private, zéro serveur</li>
+            <li>· ~150 tok/s en wasm (SIMD v128 auto-vectorisé) dans le navigateur — offline, private, zéro serveur</li>
           </ul>
           <p className="text-amber-300 pt-1">✗ Limites (documentées)</p>
           <ul className="space-y-1 text-slate-500">
-            <li>· Chemin <b>scalaire</b> : wasm32 sans AVX2 → ×115 vs le C natif (14000 tok/s) — l'upgrade est <Formula>WASM SIMD v128</Formula> (les kernels 4-tuiles se vectorisent 1:1)</li>
+            <li>· GEMM auto-vectorisé ×1.25 seulement (le chemin scalaire a un accès W stridé) — l'upgrade est un <Formula>kernel v128 manuel sur W transposé</Formula> (les tuiles 4-acc se vectorisent 1:1, ×2-3 probable)</li>
             <li>· La quantification est <b>simulée</b> : les poids restent fp32 en mémoire — même coût compute, la claim est qualité-par-bit (erreur RMS 7% INT4), pas la taille mémoire</li>
             <li>· Modèle char-level 270k / 800 steps — texte pseudo-cohérent, pas un LLM utile</li>
           </ul>

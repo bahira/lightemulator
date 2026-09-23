@@ -16,5 +16,16 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm run test
-      # le C training n'est pas en CI (données TinyStories gitignorées + gcc
-      # natif) — la suite de benchmarks C reproductible est une issue v1.0
+
+  c-bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build C (gcc, scalaire — pas de données TinyStories en CI)
+        run: gcc -O2 -ffast-math -o /tmp/lm_verify lm_c/verify_kernels.c -lm
+      - name: kernels SPEAR — vérification + microbench
+        run: |
+          /tmp/lm_verify | tee /tmp/verify_out.txt
+          ! grep -q 'FAUX' /tmp/verify_out.txt
+      # le training e2e reste hors CI (données TinyStories gitignorées) —
+      # la vérification des kernels + microbench est reproductible sans données
