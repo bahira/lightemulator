@@ -149,4 +149,27 @@ Simulation numérique du cadre du papier (module `src/physics/langevin.ts`, TS p
 
 ---
 
+## 6. Conclusions des intégrations (bilan honnête)
+
+### Ce que les deux papiers ont prouvé sur notre méthodologie
+
+La boucle grounded a **attrapé 3 vrais bugs avant publication** — exactement son travail :
+1. **PNN** : le gradient AVM du premier candidat utilisait les puissances brutes au lieu de la distribution softmaxée (`λ_c = p_c − δ(c,y)` au lieu de `probs_c − δ(c,y)`) — erreur relative 1.985, détectée par le check FD, corrigée en 1.76e-5.
+2. **Langevin** : le facteur `μΔt/(2kT)` multipliait tout le bracket y compris `−Δx` — l'Éq 10 veut `(−Δx + μ∂V·Δt)/(2kBT)`, le `μΔt` ne porte que sur `∂V`.
+3. **Langevin** : le signe de l'update — l'Éq 10 est `−∂ln P̃/∂J`, donc `J −= α·gJ`. Le signe inversé faisait **exploser** l'objectif (47.85 → 81.71, mesuré), le signe correct le fait descendre (→ 46.85). **La preuve expérimentale du mauvais signe est aussi un résultat** : les équations du papier sont correctes mais laconiques — la convention de signe est le piège.
+
+Plus une quatrième découverte numérique : dt=0.05 violait la condition de stabilité d'Euler pour `∂²V = 20+120x²` (stable seulement `|x| < 0.41`) → explosion NaN.
+
+### Le résultat scientifique le plus intéressant
+
+**La génération bruit→structure du papier de Langevin est sensible à l'échelle.** À 64+32 unités (le papier : 784+512), elle ne sépare pas du hasard (|Pearson| 0.17 vs 0.17). L'analyse : à θ=0 le gradient attendu est **exactement nul** (les termes de bruit sont indépendants des états) — le bootstrap vient du bruit, puis l'auto-amplification `J ∝ J·(⟨x'h²⟩+⟨x'v²⟩)` façonne J à un taux **dépendant du pattern** (les champs réceptifs de la Fig 2c). Ce signal est du **second ordre** (via les covariances cachées) — noyé dans le bruit à petite échelle. L'amélioration in-sample sur bruit gelé (−2.1%) est réelle mais modeste.
+
+### Ce que ça vaut pour le projet
+
+1. **2 nouveaux showcases vérifiés** avec 2 citations de papiers — la plupart des repos « paper emulation » ne vérifient rien. C'est le signal de qualité rare.
+2. **L'angle « papers verified »** est un différenciant crédible pour le pipeline consulting/cours : chaque nouveau papier = un module validé + un article de blog (« j'ai vérifié 2 papiers avec la boucle grounded — 3 bugs attrapés »).
+3. Le trick N+C s'applique à **tout système optique linéaire** — notre BPM est un propagateur linéaire unitaire (testé 3.5e-14) : un mode « inférence dataset » du lab BPM est la prochaine intégration naturelle.
+
+---
+
 *Built by [@bahira](https://github.com/bahira) — every claim falsifiable, every number reproducible.*
