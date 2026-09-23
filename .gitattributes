@@ -1,0 +1,3 @@
+*.bin -text
+*.wasm -text
+*.tgz -text
