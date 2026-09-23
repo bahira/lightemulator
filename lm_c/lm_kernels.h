@@ -19,7 +19,9 @@
 
 #include <stdint.h>
 #include <math.h>
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
 #include <immintrin.h>
+#endif
 
 extern int g_spear; /* A/B runtime : 1 = kernels SPEAR, 0 = libm */
 static inline float kexp(float x); /* défini plus bas */

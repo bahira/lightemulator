@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   OptoTransformerConfig,
   OptoAttentionTrace,
@@ -7,9 +7,8 @@ import {
   forwardDigitalReference,
   optoMeshSvdError,
   optoAttnError,
-  optoEnergyAdvantage,
 } from '../physics/optoTransformer';
-import { Panel, Stat, Slider, Segmented, Btn, Tag, Formula, useCanvas, drawGrid } from '../ui/kit';
+import { Panel, Stat, Slider, Segmented, Btn, Tag, Formula, useCanvas } from '../ui/kit';
 
 const PRESET_TOKENS: Record<string, string[]> = {
   light: ['LIGHT', 'COMPUTES', 'FASTER', 'THAN', 'ELECTRONS', 'IN', 'SILICON', 'CORE'],
@@ -69,7 +68,6 @@ export default function OptoTransformerLab() {
   // Measured receipts
   const svdErr = useMemo(() => optoMeshSvdError(dModel), [dModel]);
   const attnErr = useMemo(() => optoAttnError(seqLen, dModel), [seqLen, dModel]);
-  const energyGain = useMemo(() => optoEnergyAdvantage(seqLen, dModel), [seqLen, dModel]);
 
   // Benchmarking handler
   const runBenchmark = () => {
@@ -370,7 +368,7 @@ export default function OptoTransformerLab() {
         subtitle="Visualisation du trajet du faisceau laser à travers les modulateurs, les maillages MZI Clements/Reck, les atténuateurs VOA, et l'étage non-linéaire SPEAR."
         right={
           <div className="flex items-center gap-2">
-            <Btn tone={animating ? 'secondary' : 'primary'} onClick={() => setAnimating((a) => !a)}>
+            <Btn tone={animating ? 'default' : 'primary'} onClick={() => setAnimating((a) => !a)}>
               {animating ? '⏸ pause' : '▶ animer'}
             </Btn>
           </div>
@@ -391,9 +389,9 @@ export default function OptoTransformerLab() {
                 value={seqChoice}
                 onChange={(v) => setSeqChoice(v as any)}
                 options={[
-                  { value: 'light', label: 'Light Speed (8)' },
-                  { value: 'photon', label: 'Photonic MZI (8)' },
-                  { value: 'energy', label: 'Zero Heat (8)' },
+                  { id: 'light', label: 'Light Speed (8)' },
+                  { id: 'photon', label: 'Photonic MZI (8)' },
+                  { id: 'energy', label: 'Zero Heat (8)' },
                 ]}
               />
             </div>
@@ -408,8 +406,8 @@ export default function OptoTransformerLab() {
                 value={String(dModel)}
                 onChange={(v) => setDModel(Number(v))}
                 options={[
-                  { value: '8', label: 'D = 8' },
-                  { value: '16', label: 'D = 16' },
+                  { id: '8', label: 'D = 8' },
+                  { id: '16', label: 'D = 16' },
                 ]}
               />
             </div>
@@ -426,11 +424,13 @@ export default function OptoTransformerLab() {
             </div>
             <div className="mt-1">
               <Slider
+                label="bruit de phase"
                 min={0}
                 max={0.15}
                 step={0.005}
                 value={phaseNoise}
                 onChange={setPhaseNoise}
+                format={(v) => (v * 180 / Math.PI).toFixed(1) + '°'}
               />
             </div>
           </div>

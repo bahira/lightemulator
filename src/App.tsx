@@ -16,8 +16,9 @@ const HoloLab = lazy(() => import('./labs/HoloLab'));
 const QuantumLab = lazy(() => import('./labs/QuantumLab'));
 const LangevinLab = lazy(() => import('./labs/LangevinLab'));
 const OptoTransformerLab = lazy(() => import('./labs/OptoTransformerLab'));
+const InferenceLab = lazy(() => import('./labs/InferenceLab'));
 
-type TabId = 'bpm' | 'processor' | 'ising' | 'kan' | 'fep' | 'validate' | 'spear' | 'control' | 'dispersion' | 'drones' | 'pnn' | 'holo' | 'quantum' | 'langevin' | 'opto';
+type TabId = 'bpm' | 'processor' | 'ising' | 'kan' | 'fep' | 'validate' | 'spear' | 'control' | 'dispersion' | 'drones' | 'pnn' | 'holo' | 'quantum' | 'langevin' | 'opto' | 'inference';
 
 const TABS: { id: TabId; label: string; glyph: string; blurb: string }[] = [
   { id: 'bpm', label: 'Moteur de lumière', glyph: '≈', blurb: 'BPM split-step Fourier — propagation réelle dans les guides' },
@@ -35,6 +36,7 @@ const TABS: { id: TabId; label: string; glyph: string; blurb: string }[] = [
   { id: 'quantum', label: 'Optique quantique', glyph: 'Ψ', blurb: 'États de Fock exacts — dip HOM, MZI photon unique, violation de Bell CHSH en direct' },
   { id: 'langevin', label: 'Langevin', glyph: '⋯', blurb: 'Ordinateur thermodynamique génératif — gradient inverse exact, relation de fluctuation (arXiv:2506.15121)' },
   { id: 'opto', label: 'Opto-Transformer', glyph: '⚡', blurb: 'Co-processeur hybride photonique-SPEAR : attention optique MZI + non-linéarités rationnelles' },
+  { id: 'inference', label: 'Inference edge', glyph: '▲', blurb: 'Le vrai module C en wasm32 — 270k params, INT4, ~120 tok/s offline dans le navigateur' },
 ];
 
 export default function App() {
@@ -203,6 +205,7 @@ export default function App() {
             {tab === 'quantum' && <QuantumLab />}
             {tab === 'langevin' && <LangevinLab />}
             {tab === 'opto' && <OptoTransformerLab />}
+            {tab === 'inference' && <InferenceLab />}
           </Suspense>
         </main>
 

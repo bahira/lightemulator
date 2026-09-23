@@ -1,4 +1,4 @@
-/* ============================================================================
+﻿/* ============================================================================
  * lm_model.h ??? Mini-GPT : registre de param??tres, forward, backward EXACTE.
  * Unit?? de traduction unique incluse par lm_main.c.
  * =========================================================================== */
@@ -156,21 +156,24 @@ static void scratchAlloc(int B) {
 #include <omp.h>
 #endif
 static int cpuAvx2 = -1;
-static int g_gemmOld = 0; /* --gemm-old : force la chaîne unique (A/B e2e) */
+static int g_gemmOld = 0; /* --gemm-old : force la chaÃ®ne unique (A/B e2e) */
 double g_tGemm = 0, g_tAtt = 0, g_tLn = 0;
 static int g_prof = 0;
 static inline double profNow(void) { struct timespec ts; timespec_get(&ts, TIME_UTC); return (double)ts.tv_sec + 1e-9 * (double)ts.tv_nsec; }
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
 #include <immintrin.h>
-/* GEMM streaming : poids pr??-transpos??s [K][N] ??? z??ro repack, acc??s contigus.
-   Toutes les largeurs N utilis??es (72/216/288/104) sont multiples de 8. */
+#endif
+/* GEMM streaming : poids pré-transposés [K][N] — zéro repack, accès contigus.
+   Toutes les largeurs N utilisées (72/216/288/104) sont multiples de 8. */
 static void mm_nt(float *Y, const float *X, const float *W, const float *b,
-                  int M, int K, int N); /* forward decl ??? chemin scalaire */
+                  int M, int K, int N); /* forward decl — chemin scalaire */
+#if defined(__x86_64__) || defined(_M_X64)
 __attribute__((target("avx2,fma")))
 static void mm_nt_t_avx2(float *Y, const float *X, const float *Wtr, const float *b,
                          int M, int K, int N) {
     /* micro-kernel PR#1 : 4 tuiles de 8 cols partagent le broadcast xm[k]
-       (charges contigues k*N+nb..+31) → 4 chaines FMA indépendantes.
-       Latence FMA ~4 cy masquée (pic 2 FMA/cy) vs 1 chaîne = 0.25 FMA/cy. */
+       (charges contigues k*N+nb..+31) â†’ 4 chaines FMA indÃ©pendantes.
+       Latence FMA ~4 cy masquÃ©e (pic 2 FMA/cy) vs 1 chaÃ®ne = 0.25 FMA/cy. */
     const int N8 = N & ~7;
     _Pragma("omp parallel for schedule(static)")
     for (int m = 0; m < M; m++) {
@@ -219,6 +222,7 @@ static void mm_nt_t_avx2(float *Y, const float *X, const float *Wtr, const float
         }
     }
 }
+#endif /* __x86_64__ — mm_nt_t_avx2 (wasm/ARM : chemin scalaire) */
 static void mm_nt_t(float *Y, const float *X, const float *Wrow, const float *Wtr,
                     const float *b, int M, int K, int N) {
 #if defined(__x86_64__) || defined(_M_X64)
@@ -289,7 +293,7 @@ static void mm_nt_avx2(float *Y, const float *X, const float *W, const float *b,
 __attribute__((target("avx2,fma")))
 static void mm_dxd_avx2(float *dX, const float *dY, const float *W, int M, int K, int N) {
     /* multi-acc PR#1 : 4 tuiles de 8 sur K partagent broadcast dm[n]
-       (W[n][k..k+31] contigu) — backward dX, même pattern que mm_nt_t. */
+       (W[n][k..k+31] contigu) â€” backward dX, mÃªme pattern que mm_nt_t. */
     const int K8 = K & ~7;
     _Pragma("omp parallel for schedule(static)")
     for (int m = 0; m < M; m++) {
@@ -331,7 +335,7 @@ __attribute__((target("avx2,fma")))
 static void mm_tndw_avx2(float *dW, float *db, const float *dY, const float *X,
                          int M, int K, int N) {
     /* multi-acc : pour chaque n, tuiles K=32 avec accs en registres sur tout M
-       (évite load/store dw à chaque m — chaîne mémoire avant). */
+       (Ã©vite load/store dw Ã  chaque m â€” chaÃ®ne mÃ©moire avant). */
     const int K8 = K & ~7;
     _Pragma("omp parallel for schedule(static)")
     for (int n = 0; n < N; n++) {

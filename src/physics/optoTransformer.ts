@@ -22,7 +22,7 @@
 //    - Optical MAC energy: ~0.18 pJ/MAC vs 7nm CMOS ~12.5 pJ/MAC
 // ============================================================================
 
-import { CMat, cmat, decomposeMesh, reconstruct, MeshDecomposition } from './mzi';
+import { CMat, cmat, decomposeMesh, MeshDecomposition } from './mzi';
 import { spearGeluErf, exactGelu } from './spear';
 
 // ---------------------------------------------------------------------------
