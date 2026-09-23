@@ -94,6 +94,26 @@ Lecture honnête : les trois modes perdent ~+0.02 val loss — à cette échelle
 
 ---
 
+<<<<<<< HEAD
+=======
+## 2. Intégrations papiers (vérifiées)
+
+### 2.1 PNN accelerator — Nature Com. 17, 1059 (2026)
+Émulation par algèbre linéaire du PNN inverse-designed du papier (module `src/physics/pnn.ts`, TS pur zéro dépendance). Fidèlement reproduit : le trick **« N+C »** (tous les champs d'échantillons reconstruits de N champs de base par combinaison linéaire — seulement N+C simulations par époque au lieu de L) et le **gradient AVM** (recouvrement champs avant/adjoints). Le FDTD 3D n'est PAS simulé (documenté dans le header).
+- **Superposition N+C — linéarité exacte** : 2.12e-16 (epsilon machine) + additivité E(a+b) = E(a)+E(b)
+- **Gradient AVM vs FD** : 1.76e-5 (le check FD a attrapé un bug du premier candidat : λ = puissances brutes au lieu de softmaxées — corrigé)
+- **Entraînement** : 100% accuracy sur 40 échantillons tenus à l'écart (papier : 97.8% numérique MNIST / 99.1% MedNIST)
+
+### 2.2 Generative thermodynamic computing — arXiv:2506.15121 (Whitelam, LBNL)
+Simulation numérique du cadre du papier (module `src/physics/langevin.ts`, TS pur zéro dépendance) : ordinateur de Langevin (Nv+Nh unités, J2/J4, dynamique sur-amortie), entraînement par maximisation de la probabilité de la trajectoire inverse.
+- **Gradient inverse (Éqs 10-11) vs FD** : 1.13e-6 — le gradient analytique d'Onsager-Machlup est exact. Trois subtilités corrigées avant validation : le μΔt ne porte que sur ∂iV (pas sur −Δx), tout est évalué à x' = x+Δx, et l'update est **J −= α·gJ** (l'Éq 10 est −∂ln P̃/∂J — le signe inversé faisait exploser l'objectif, vérifié expérimentalement)
+- **Relation de fluctuation** ln[P₀/P̃_θ] ≈ −(ΔQ₀+ΔQθ)/(2kBT) : convergence ordre 1 confirmée (resHalf/resDt = 0.029)
+- **Entraînement (bruit gelé)** : l'objectif descend **47.85 → 46.85**, sous l'entropie du bruit pur (N/2 = 48) — l'optimiseur fonctionne
+- **Part honnête** : la génération bruit→structure à échelle réduite (64+32 unités) ne sépare pas du hasard (|Pearson| 0.17 vs 0.17) — le papier utilise 784+512 unités ; le signal d'entraînement (second ordre via les covariances cachées) est noyé dans le bruit à cette échelle. Documenté dans le header du module.
+
+---
+
+>>>>>>> origin/master
 ## 3. La page live — vérification dans le navigateur
 
 **https://bahira.github.io/lightemulator/** — panneau d'instrument avec :
@@ -132,4 +152,30 @@ Lecture honnête : les trois modes perdent ~+0.02 val loss — à cette échelle
 
 ---
 
+<<<<<<< HEAD
+=======
+## 6. Conclusions des intégrations (bilan honnête)
+
+### Ce que les deux papiers ont prouvé sur notre méthodologie
+
+La boucle grounded a **attrapé 3 vrais bugs avant publication** — exactement son travail :
+1. **PNN** : le gradient AVM du premier candidat utilisait les puissances brutes au lieu de la distribution softmaxée (`λ_c = p_c − δ(c,y)` au lieu de `probs_c − δ(c,y)`) — erreur relative 1.985, détectée par le check FD, corrigée en 1.76e-5.
+2. **Langevin** : le facteur `μΔt/(2kT)` multipliait tout le bracket y compris `−Δx` — l'Éq 10 veut `(−Δx + μ∂V·Δt)/(2kBT)`, le `μΔt` ne porte que sur `∂V`.
+3. **Langevin** : le signe de l'update — l'Éq 10 est `−∂ln P̃/∂J`, donc `J −= α·gJ`. Le signe inversé faisait **exploser** l'objectif (47.85 → 81.71, mesuré), le signe correct le fait descendre (→ 46.85). **La preuve expérimentale du mauvais signe est aussi un résultat** : les équations du papier sont correctes mais laconiques — la convention de signe est le piège.
+
+Plus une quatrième découverte numérique : dt=0.05 violait la condition de stabilité d'Euler pour `∂²V = 20+120x²` (stable seulement `|x| < 0.41`) → explosion NaN.
+
+### Le résultat scientifique le plus intéressant
+
+**La génération bruit→structure du papier de Langevin est sensible à l'échelle.** À 64+32 unités (le papier : 784+512), elle ne sépare pas du hasard (|Pearson| 0.17 vs 0.17). L'analyse : à θ=0 le gradient attendu est **exactement nul** (les termes de bruit sont indépendants des états) — le bootstrap vient du bruit, puis l'auto-amplification `J ∝ J·(⟨x'h²⟩+⟨x'v²⟩)` façonne J à un taux **dépendant du pattern** (les champs réceptifs de la Fig 2c). Ce signal est du **second ordre** (via les covariances cachées) — noyé dans le bruit à petite échelle. L'amélioration in-sample sur bruit gelé (−2.1%) est réelle mais modeste.
+
+### Ce que ça vaut pour le projet
+
+1. **2 nouveaux showcases vérifiés** avec 2 citations de papiers — la plupart des repos « paper emulation » ne vérifient rien. C'est le signal de qualité rare.
+2. **L'angle « papers verified »** est un différenciant crédible pour le pipeline consulting/cours : chaque nouveau papier = un module validé + un article de blog (« j'ai vérifié 2 papiers avec la boucle grounded — 3 bugs attrapés »).
+3. Le trick N+C s'applique à **tout système optique linéaire** — notre BPM est un propagateur linéaire unitaire (testé 3.5e-14) : un mode « inférence dataset » du lab BPM est la prochaine intégration naturelle.
+
+---
+
+>>>>>>> origin/master
 *Built by [@bahira](https://github.com/bahira) — every claim falsifiable, every number reproducible.*

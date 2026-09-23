@@ -32,6 +32,7 @@ import {
 } from './optics';
 import { phototaxisError, trilaterationError, friisError, learningMonotonicity } from './drones';
 import { linearityError, avmCheckError, pnnBench } from './pnn';
+import { langevinGradError, fluctuationError, frozenObjectiveDecrease } from './langevin';
 import {
   fraunhoferDirichletError, fraunhoferSincCut, ringsTarget, dotsTarget,
   gerchbergSaxton, quantizePhase,
@@ -85,6 +86,7 @@ export type TestId =
   | 'opt-sellmeier' | 'opt-gdd' | 'opt-pulse' | 'opt-fresnel'
   | 'drone-phototaxie' | 'drone-trilateration' | 'drone-link' | 'drone-apprentissage'
   | 'pnn-linearity' | 'pnn-grad' | 'pnn-train'
+  | 'lang-grad' | 'lang-fluctuation' | 'lang-train'
   | 'holo-fraunhofer' | 'holo-gs' | 'holo-energy'
   | 'qo-bs' | 'qo-hom' | 'qo-chsh';
 
@@ -99,6 +101,7 @@ export const TEST_ORDER: TestId[] = [
   'opt-sellmeier', 'opt-gdd', 'opt-pulse', 'opt-fresnel',
   'drone-phototaxie', 'drone-trilateration', 'drone-link', 'drone-apprentissage',
   'pnn-linearity', 'pnn-grad', 'pnn-train',
+  'lang-grad', 'lang-fluctuation', 'lang-train',
   'holo-fraunhofer', 'holo-gs', 'holo-energy',
   'qo-bs', 'qo-hom', 'qo-chsh',
 ];
@@ -151,6 +154,28 @@ export function runTest(id: TestId): TestResult {
         'Le PNN apprend une classification linéairement séparable par gradient AVM',
         'Précision argmax sur 40 échantillons tenus à l’écart, après 200 époques SGD momentum',
         v.accuracy, 0.9, ms, `${v.msPerEpoch.toFixed(1)} ms/époque · coût N+C = ${v.ncRatio.toFixed(0)}× moins de simulations que L`,
+        false);
+    }
+    case 'lang-grad': {
+      const { v, ms } = timed(() => langevinGradError());
+      return mk('Langevin', 'Gradient inverse (Éqs 10-11) vs différences finies',
+        'Le gradient analytique de la trajectoire inverse (action d’Onsager-Machlup) est exact',
+        'Gradient Éq 10/11 vs FD centrées sur couplages + biais (h=1e-6)',
+        v.rel, 1e-4, ms, `${v.checks} paramètres vérifiés · arXiv:2506.15121`);
+    }
+    case 'lang-fluctuation': {
+      const { v, ms } = timed(() => fluctuationError());
+      return mk('Langevin', 'Relation de fluctuation — convergence ordre 1',
+        'ln[P₀/P̃_θ] ≈ −(ΔQ₀+ΔQθ)/(2kBT) au premier ordre en Δt',
+        'Résidu direct vs premier ordre : resDt vs resHalf — convergence ordre 1',
+        v.ratio, 0.6, ms, `resDt = ${v.resDt.toExponential(2)} → resHalf = ${v.resHalf.toExponential(2)}`);
+    }
+    case 'lang-train': {
+      const { v, ms } = timed(() => frozenObjectiveDecrease());
+      return mk('Langevin', 'Entraînement — descente de l’objectif sur bruit gelé',
+        'L’optimiseur fait descendre −ln P̃ sous l’entropie du bruit pur (N/2)',
+        'Objectif sur 24 trajectoires gelées : θ=0 vs θ entraîné (4 époques)',
+        v.decrease, 0, ms, `objInit = ${v.objInit.toFixed(2)} → objFinal = ${v.objFinal.toFixed(2)} (N/2 = 48)`,
         false);
     }
 

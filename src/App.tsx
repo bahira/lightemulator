@@ -11,10 +11,11 @@ const SpearLab = lazy(() => import('./labs/SpearLab'));
 const ControlLab = lazy(() => import('./labs/ControlLab'));
 const DispersionLab = lazy(() => import('./labs/DispersionLab'));
 const DroneLab = lazy(() => import('./labs/DroneLab'));
+const PnnLab = lazy(() => import('./labs/PnnLab'));
 const HoloLab = lazy(() => import('./labs/HoloLab'));
 const QuantumLab = lazy(() => import('./labs/QuantumLab'));
 
-type TabId = 'bpm' | 'processor' | 'ising' | 'kan' | 'fep' | 'validate' | 'spear' | 'control' | 'dispersion' | 'drones' | 'holo' | 'quantum';
+type TabId = 'bpm' | 'processor' | 'ising' | 'kan' | 'fep' | 'validate' | 'spear' | 'control' | 'dispersion' | 'drones' | 'pnn' | 'holo' | 'quantum';
 
 const TABS: { id: TabId; label: string; glyph: string; blurb: string }[] = [
   { id: 'bpm', label: 'Moteur de lumière', glyph: '≈', blurb: 'BPM split-step Fourier — propagation réelle dans les guides' },
@@ -22,11 +23,12 @@ const TABS: { id: TabId; label: string; glyph: string; blurb: string }[] = [
   { id: 'ising', label: 'Machine d’Ising', glyph: '⬡', blurb: 'CIM sur MaxCut, comparée à l’optimum exact' },
   { id: 'kan', label: 'KAN photonique', glyph: '◈', blurb: 'B-splines apprises, backprop vérifiée' },
   { id: 'fep', label: 'Énergie libre', glyph: '◉', blurb: 'Champs complexes apprenant par contraste d’équilibre' },
-  { id: 'validate', label: 'Validation', glyph: '✓', blurb: 'La boucle grounded — 38 tests numériques' },
+  { id: 'validate', label: 'Validation', glyph: '✓', blurb: 'La boucle grounded — 41 tests numériques' },
   { id: 'spear', label: 'Kernels SPEAR', glyph: 'ƒ', blurb: 'Activations LLM distillées en algèbre pure, benchmarkée ici' },
   { id: 'control', label: 'Contrôle', glyph: '⌖', blurb: 'IK fermée, trajectoire jerk-bornée, pendule inversé — audités & corrigés' },
   { id: 'dispersion', label: 'Dispersion', glyph: '∿', blurb: 'Sellmeier exact, GDD/TOD réparés, impulsion femtoseconde & biréfringence' },
   { id: 'drones', label: 'Drones lumineux', glyph: '➤', blurb: 'Playground — phototaxie réelle, trilatération exacte, budget de Friis' },
+  { id: 'pnn', label: 'PNN', glyph: '⬢', blurb: 'Accélérateur photonique émulé — superposition N+C + gradient AVM (Nat. Com. 2026)' },
   { id: 'holo', label: 'Holographie', glyph: '⊛', blurb: 'Gerchberg–Saxton réel — dessinez la cible, l’hologramme de phase est calculé, quantifié, mesuré' },
   { id: 'quantum', label: 'Optique quantique', glyph: 'Ψ', blurb: 'États de Fock exacts — dip HOM, MZI photon unique, violation de Bell CHSH en direct' },
 ];
@@ -192,6 +194,7 @@ export default function App() {
             {tab === 'control' && <ControlLab />}
             {tab === 'dispersion' && <DispersionLab />}
             {tab === 'drones' && <DroneLab />}
+            {tab === 'pnn' && <PnnLab />}
             {tab === 'holo' && <HoloLab />}
             {tab === 'quantum' && <QuantumLab />}
           </Suspense>
