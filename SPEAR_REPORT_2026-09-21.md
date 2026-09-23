@@ -25,6 +25,7 @@ Honnete : pas de gain force.
 | UC1 FFN fusionne gelu_erf (1024×768×3072) | 203.7 ms / 23.7 GFLOPS vs 1072.6 ms two-pass → ×5.26 wall ; err 2.24e-8 |
 | UC2 porte MLP tanh_p34 | L∞ 1.562e-3 vs 4.622e-2 → ×29.6 |
 | UC3 backprop gelu_erf | gradcheck : \|err\|max 2.53e-4, 0 cellule hors tol |
+| UC4 Opto-SPEAR attention photonique MZI + FFN (S=64, D=64, dFfn=256) | 3.11 ms, temps de vol 160 ps ; gain énergie physique ×5.48 vs CMOS 7nm ; err 4.44e-8 |
 
 Qualite d'entrainement (spear_train_quality.c, MLP 2→16→2, spirale, meme seed) :
 exact 2.3289 < gelu_erf 2.3406 < gelu_quintic 2.3650.
@@ -58,7 +59,7 @@ Claims app verifies : identite 1.39e-4, residu 2.0e-15, reduction 11.9×, attent
 | src/kernels/spear_kernels.h | memes noyaux C99 |
 | src/kernels/operator_benchmark.py | bench A/B (corrige) |
 | src/kernels/spur_parity.py | parite vs pip spur-math |
-| src/kernels/spear_usecases.c | UC1-UC3 |
+| src/kernels/spear_usecases.c | UC1-UC4 |
 | src/kernels/spear_train_quality.c | precision→qualite |
 | tools/spear_grounded.mjs | boucle grounded 100 it. |
 | tools/fep_audit.ts | audit FEP A/B/C |

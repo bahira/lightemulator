@@ -15,8 +15,9 @@ const PnnLab = lazy(() => import('./labs/PnnLab'));
 const HoloLab = lazy(() => import('./labs/HoloLab'));
 const QuantumLab = lazy(() => import('./labs/QuantumLab'));
 const LangevinLab = lazy(() => import('./labs/LangevinLab'));
+const OptoTransformerLab = lazy(() => import('./labs/OptoTransformerLab'));
 
-type TabId = 'bpm' | 'processor' | 'ising' | 'kan' | 'fep' | 'validate' | 'spear' | 'control' | 'dispersion' | 'drones' | 'pnn' | 'holo' | 'quantum' | 'langevin';
+type TabId = 'bpm' | 'processor' | 'ising' | 'kan' | 'fep' | 'validate' | 'spear' | 'control' | 'dispersion' | 'drones' | 'pnn' | 'holo' | 'quantum' | 'langevin' | 'opto';
 
 const TABS: { id: TabId; label: string; glyph: string; blurb: string }[] = [
   { id: 'bpm', label: 'Moteur de lumière', glyph: '≈', blurb: 'BPM split-step Fourier — propagation réelle dans les guides' },
@@ -24,7 +25,7 @@ const TABS: { id: TabId; label: string; glyph: string; blurb: string }[] = [
   { id: 'ising', label: 'Machine d’Ising', glyph: '⬡', blurb: 'CIM sur MaxCut, comparée à l’optimum exact' },
   { id: 'kan', label: 'KAN photonique', glyph: '◈', blurb: 'B-splines apprises, backprop vérifiée' },
   { id: 'fep', label: 'Énergie libre', glyph: '◉', blurb: 'Champs complexes apprenant par contraste d’équilibre' },
-  { id: 'validate', label: 'Validation', glyph: '✓', blurb: 'La boucle grounded — 41 tests numériques' },
+  { id: 'validate', label: 'Validation', glyph: '✓', blurb: 'La boucle grounded — 44 tests numériques' },
   { id: 'spear', label: 'Kernels SPEAR', glyph: 'ƒ', blurb: 'Activations LLM distillées en algèbre pure, benchmarkée ici' },
   { id: 'control', label: 'Contrôle', glyph: '⌖', blurb: 'IK fermée, trajectoire jerk-bornée, pendule inversé — audités & corrigés' },
   { id: 'dispersion', label: 'Dispersion', glyph: '∿', blurb: 'Sellmeier exact, GDD/TOD réparés, impulsion femtoseconde & biréfringence' },
@@ -33,6 +34,7 @@ const TABS: { id: TabId; label: string; glyph: string; blurb: string }[] = [
   { id: 'holo', label: 'Holographie', glyph: '⊛', blurb: 'Gerchberg–Saxton réel — dessinez la cible, l’hologramme de phase est calculé, quantifié, mesuré' },
   { id: 'quantum', label: 'Optique quantique', glyph: 'Ψ', blurb: 'États de Fock exacts — dip HOM, MZI photon unique, violation de Bell CHSH en direct' },
   { id: 'langevin', label: 'Langevin', glyph: '⋯', blurb: 'Ordinateur thermodynamique génératif — gradient inverse exact, relation de fluctuation (arXiv:2506.15121)' },
+  { id: 'opto', label: 'Opto-Transformer', glyph: '⚡', blurb: 'Co-processeur hybride photonique-SPEAR : attention optique MZI + non-linéarités rationnelles' },
 ];
 
 export default function App() {
@@ -200,6 +202,7 @@ export default function App() {
             {tab === 'holo' && <HoloLab />}
             {tab === 'quantum' && <QuantumLab />}
             {tab === 'langevin' && <LangevinLab />}
+            {tab === 'opto' && <OptoTransformerLab />}
           </Suspense>
         </main>
 
@@ -228,6 +231,7 @@ export default function App() {
                   <li>· Dispersion : dérivées de Sellmeier exactes, phase spectrale β₂ω²/2+β₃ω³/6</li>
                   <li>· Holographie : Gerchberg–Saxton sur FFT 2D, efficacité &amp; conservation mesurées</li>
                   <li>· Optique quantique : Fock 1–2 photons en algèbre fermée, CHSH vs variables cachées simulées</li>
+                  <li>· Opto-Transformer : co-processeur hybride MZI SVD + Attention &amp; FFN SPEAR rationnel</li>
                 </ul>
               </div>
               <div>
