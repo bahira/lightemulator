@@ -56,6 +56,7 @@ typedef struct {
     float *fmax;                    /* [TI_S_SITES] maxima mesurés sur le graphe fp32 */
     int measure_fp;                 /* 1 = accumuler les maxima fp32 (calibration) */
     float *Weff;                    /* poids ternaires déquantifiés (4 zones, voir ti_fwd_fp32) */
+    float *Yt;                      /* transposé de travail pour ti_lin_dw (réutilisé) */
     int qat;
     long sat_count, sat_total;      /* saturations int8 (fraction de ±127) */
     long grd_bad;                   /* gradients non finis neutralisés (dernier pas) */
@@ -156,8 +157,11 @@ static void ti_transpose(float *__restrict Yt, const float *__restrict Y, int n,
 /* dW[N][K] += Y[n][N]ᵀ·X[n][K] ; sw != NULL ⇒ gradient ramené aux maîtres (×sw) */
 static void ti_lin_dw(const float *__restrict X, const float *__restrict Y,
                       float *__restrict dW, int n, int K, int N,
-                      const float *__restrict sw) {
-    float *Yt = (float *)ti_fa(sizeof(float) * (size_t)N * n);
+                      const float *__restrict sw, float *__restrict Yt) {
+    /* Yt est un tampon permanent du modèle, fourni par l'appelant : l'allouer
+     * et le libérer à chaque appel coûtait un malloc+free par matrice et par
+     * pas, pour un tenseur de N·n flottants — 20 allocations par pas
+     * d'entraînement supprimées. Le tampon n'est donc jamais libéré ici. */
     ti_transpose(Yt, Y, n, N);
     #pragma omp parallel for if(N >= 64) schedule(static)
     for (int j = 0; j < N; j++) {
@@ -174,7 +178,6 @@ static void ti_lin_dw(const float *__restrict X, const float *__restrict Y,
             }
         }
     }
-    free(Yt);
 }
 
 static void ti_lin_dx(const float *__restrict Y, const float *__restrict W,
@@ -259,6 +262,11 @@ static void ti_model_init(TiModel *m, int B, uint64_t seed) {
     m->log32 = (int32_t *)ti_fa(sizeof(int32_t) * BT * V);
     m->dL    = (float *)ti_fa(sizeof(float) * BT * V);
     m->fmax  = (float *)ti_fa(sizeof(float) * TI_S_SITES);
+    {   /* plus grand transposé : Wqkv a 3D rangées de BT jetons (V peut être plus
+         * petit) — dimensionner sur le plus grand des deux, pas sur V */
+        const size_t lignes = (size_t)(3 * D > V ? 3 * D : V);
+        m->Yt = (float *)ti_fa(sizeof(float) * lignes * (size_t)m->ntok);
+    }
     {   /* quatre zones : Wqkv, Wo, W1, W2 sont vivants simultanément dans la
          * boucle par jeton ; Wout réutilise la zone de Wqkv (libre alors) */
         size_t nb = (size_t)3 * D * D + (size_t)D * D + 2 * (size_t)F * D;
@@ -305,7 +313,7 @@ static void ti_model_free(TiModel *m) {
     free(m->sw_qkv); free(m->sw_wo); free(m->sw_w1); free(m->sw_w2); free(m->sw_out);
     free(m->X); free(m->N1); free(m->N2); free(m->QKV); free(m->AO); free(m->ATTN); free(m->XNN);
     free(m->F1); free(m->FSQ); free(m->NF); free(m->LOGITS); free(m->log32); free(m->dL);
-    free(m->fmax); free(m->Weff);
+    free(m->fmax); free(m->Weff); free(m->Yt);
     ti_int_free(&m->e);
 }
 
@@ -424,6 +432,18 @@ static void ti_export(TiModel *m) {
         for (int c = 0; c < D; c++) e->rq_ao[l * D + c] = r;
     }
     ti_quant_ternary(ti_p(m, P_WOUT, 0), m->sw_out, e->wout, V, D);
+    {   /* échelle de sortie, nécessaire à un échantillonnage à température juste :
+         * le logit physique vaut log32[v]·S_final·sw_out[v] */
+        float swmax = 1e-12f;
+        for (int v = 0; v < V; v++) if (m->sw_out[v] > swmax) swmax = m->sw_out[v];
+        for (int v = 0; v < V; v++) {
+            e->swq[v] = (int32_t)lrintf(m->sw_out[v] / swmax * 4096.0f);
+            /* jamais 0 : le score d'une classe à échelle nulle vaudrait 0 quel
+             * que soit son logit, c'est-à-dire la classe effacée du tirage */
+            if (e->swq[v] < 1) e->swq[v] = 1;
+        }
+        e->logit_scale = m->S_final[0] * swmax;
+    }
 }
 
 /* ---------------------------------------------------------- calibration ------
@@ -806,8 +826,11 @@ static double ti_loss_grad(TiModel *m, const int *tgt, int n) {
  *   dP[t][u] = Σ_d dO[t][d]·V[u][d]
  *   dS[t][u] = p[t][u]·(dP[t][u] − Σ_u' p[t][u']·dP[t][u'])
  *   dQ[t] += dS[t][u]·K[u]/√HD ; dK[u] += dS[t][u]·Q[t]/√HD
- * Écrite pour être VÉRIFIÉE séparément (--attncheck) : c'est le module où une
- * erreur d'indice passe inaperçue tout en corrompant toute la chaîne.
+ * Écrite pour être VÉRIFIÉE séparément : c'est le module où une erreur d'indice
+ * passe inaperçue tout en corrompant toute la chaîne. La vérification est
+ * désormais tools/ti_reference.py (implémentation numpy indépendante, qui
+ * recalcule ce bloc à partir du même vidage) plutôt qu'un mode --attncheck
+ * maison dont le seuil de convergence était obsolète.
  */
 static void ti_attn_bwd(TiModel *m, int l, const float *dAO, float *dQKV, float *dP) {
     /* Accumulateurs float et boucles contiguës : cette fonction représentait
@@ -895,7 +918,7 @@ static void ti_backward(TiModel *m, const int *ids, int n) {
          * aucune échelle d'activation n'intervient dans les logits */
         const float Sf = m->qat ? m->S_final[0] : 1.0f;
         for (size_t i = 0; i < BT * V; i++) dLs[i] = m->dL[i] * Sf;
-        ti_lin_dw(m->NF, dLs, ti_gw(m, P_WOUT, 0), BT, D, V, m->sw_out);
+        ti_lin_dw(m->NF, dLs, ti_gw(m, P_WOUT, 0), BT, D, V, m->sw_out, m->Yt);
         ti_lin_dx(dLs, m->qat ? ti_weff(m, P_WOUT, 0, V, D) : ti_p(m, P_WOUT, 0), dN, BT, D, V, 1);
         free(dLs);
     }
@@ -921,7 +944,7 @@ static void ti_backward(TiModel *m, const int *ids, int n) {
          * l'attention et le FFN partagent ce même état intermédiaire, et son
          * gradient est dcur + dxn (dxn = rétroprop de la norme 2). */
         /* 3a) FFN : W2 puis ReLU² */
-        ti_lin_dw(fsq, dcur, ti_gw(m, P_W2, (long)l * D * F), BT, F, D, sw2);
+        ti_lin_dw(fsq, dcur, ti_gw(m, P_W2, (long)l * D * F), BT, F, D, sw2, m->Yt);
         ti_lin_dx(dcur, m->qat ? ti_weff(m, P_W2, l, D, F) : W2, dN, BT, F, D, 1);   /* dN = dFSQ */
         for (int i = 0; i < m->ntok; i++)
             for (int j = 0; j < F; j++) {
@@ -929,7 +952,7 @@ static void ti_backward(TiModel *m, const int *ids, int n) {
                 dN[idx] = (f1[idx] > 0.0f) ? 2.0f * f1[idx] * dN[idx] : 0.0f;
             }
         /* 3b) W1 puis norme 2 (entrée = résidu intermédiaire m->XNN) */
-        ti_lin_dw(n2, dN, ti_gw(m, P_W1, (long)l * F * D), BT, D, F, sw1);
+        ti_lin_dw(n2, dN, ti_gw(m, P_W1, (long)l * F * D), BT, D, F, sw1, m->Yt);
         ti_lin_dx(dN, m->qat ? ti_weff(m, P_W1, l, F, D) : W1, dB, BT, D, F, 1);     /* dB = dN2 */
         {
             const float *xnn = m->XNN + (size_t)l * BT * D;
@@ -940,12 +963,12 @@ static void ti_backward(TiModel *m, const int *ids, int n) {
         /* 3c) gradient total de l'état intermédiaire */
         for (size_t i = 0; i < BT * D; i++) dC[i] = dcur[i] + dB[i];
         /* 3d) Wo */
-        ti_lin_dw(ao, dC, ti_gw(m, P_WO, (long)l * D * D), BT, D, D, swo);
+        ti_lin_dw(ao, dC, ti_gw(m, P_WO, (long)l * D * D), BT, D, D, swo, m->Yt);
         ti_lin_dx(dC, m->qat ? ti_weff(m, P_WO, l, D, D) : Wo, dA, BT, D, D, 1);     /* dA = dAO */
         /* 3e) attention : dAO → dQ, dK, dV (+ valeurs) */
         ti_attn_bwd(m, l, dA, dQKV, dP);
         /* 3f) Wqkv puis norme 1 */
-        ti_lin_dw(n1, dQKV, ti_gw(m, P_WQKV, (long)l * 3 * D * D), BT, D, 3 * D, swq);
+        ti_lin_dw(n1, dQKV, ti_gw(m, P_WQKV, (long)l * 3 * D * D), BT, D, 3 * D, swq, m->Yt);
         ti_lin_dx(dQKV, m->qat ? ti_weff(m, P_WQKV, l, 3 * D, D) : Wq, dN, BT, D, 3 * D, 1); /* dN = dN1 */
         for (int i = 0; i < m->ntok; i++)
             ti_norm_bwd(Xc + (size_t)i * D, g1, dN + (size_t)i * D, dN + (size_t)i * D,

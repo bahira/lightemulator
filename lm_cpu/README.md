@@ -95,25 +95,41 @@ Deux conclusions mesurées, dans deux directions opposées :
 Pour comparaison, la baseline mini-GPT de 270 k paramètres de ce dépôt atteint
 3,79 avec 20 % des paramètres et **sans contrainte d'inférence entière**.
 
-Échantillon du modèle à 3,35 (génération entière, T=0,625, 220 jetons) :
+Échantillon du modèle à 3,35 (génération entière, 220 jetons, le fichier `m.ti`
+étant celui exporté ci-dessus) :
+
+`./ti_main --sample "To be or not" 220 --export m.ti --temp 160 --seed 7`
 
 ```
-To be or nothand,
-I beandeand theand theand, theand,
-Wheand theand beand theand thand thereand the thererd there therereand theand the......
+To be or notinoryouechaspey,
+I'd s!
+Ann mave Wis benelllyou.
+Wh Yone be be ALer, seathayadseond anstend be s SABbedigreisp,
+Fow
+ADor s I:
+Aleoulaghtelindarnowot chansss s!
+I t ste, ge fowe tove s mad. spot ps is the veise inialingo
 ```
 
 Un modèle de 1,33 M paramètres ayant vu 2 M jetons produit cela — ce n'est pas
 une démonstration de qualité linguistique, c'est la trace d'un moteur qui
-fonctionne (le modèle QAT, entraîné par gradient biaisé, produit des « e »
-répétés : la différence de perte, 0,4 nat, s'entend).
+fonctionne : la syntaxe y est (majuscules, apostrophes, fins de vers), le
+vocabulaire non.
+
+La **température** est en Q8 : `--temp 256` vaut T = 1,00, `--temp 160` vaut
+T = 0,62 (d'où l'argument ci-dessus). Elle agit réellement sur le tirage — la
+distribution du moteur a été comparée à la softmax exacte en float64
+(`p(top)` = 0,0552 des deux côtés) et `./ti_test --sampling` vérifie l'accord sur
+60 000 tirages à deux températures. Avant correction, la température était
+appliquée aux logits entiers *bruts*, sans leur échelle physique : tous les
+tirages se ressemblaient et la génération était dégénérée.
 
 La fidélité est aussi vérifiée site par site (`--fidelity`) : le moteur entier est
 comparé au graphe flottant *qui lui correspond exactement* (mêmes poids effectifs,
 mêmes échelles), donc l'écart mesuré est du coût de quantification pur.
 
 ```
-perte fp32 (poids ternaires) 5,5833  |  perte moteur entier 5,5810   écart 0,04 %
+perte fp32 (poids ternaires) 5,5833  |  perte moteur entier 5,5812   écart 0,038 %
 résidu écrêté : 0,000 %
 ```
 
@@ -121,14 +137,15 @@ résidu écrêté : 0,000 %
 
 | | |
 |---|---|
-| Préfixage entier (B=8, T=256) | **10 725 jetons/s** (1,43 M MAC/jeton) |
-| Décodage autorégressif (1 jeton) | **9 449 jetons/s** (1,38 M MAC/jeton) |
-| Pas d'entraînement complet | 3 476 jetons/s (forward 205 ms, rétroprop 380 ms) |
-| Entraînement fp32 (référence) | 2 207 jetons/s |
+| Préfixage entier (B=8, T=256) | **10 835 jetons/s** (1,43 M MAC/jeton) |
+| Décodage autorégressif (1 jeton) | **11 576 jetons/s** (1,38 M MAC/jeton) |
+| Pas d'entraînement complet | 3 671 jetons/s (forward 207 ms, rétroprop 348 ms) |
+| Entraînement fp32 (référence) | ≈2 200 jetons/s (mesuré sur les runs fp32 de 1 000 pas) |
 
-(Préfixage et décodage ont été mesurés à 13 310 et 12 361 jetons/s à d'autres
-moments : la machine n'a que 2 cœurs et ces chiffres bougent de ±20 % avec la
-charge. Les MAC/jeton, eux, sont exacts — c'est un compteur, pas un chronomètre.)
+(Préfixage et décodage ont été mesurés à 11 380 et 12 007 jetons/s dans la mesure
+immédiatement suivante : la machine n'a que 2 cœurs et ces chiffres bougent de
+±20 % avec la charge. Les MAC/jeton, eux, sont exacts — c'est un compteur, pas un
+chronomètre.)
 
 Le gain de ×3,8 sur la version -O2 vient de `-O3 -funroll-loops` : les boucles
 d'accumulation des noyaux de rétropropagation ne sont **pas** vectorisées à -O2
@@ -139,12 +156,23 @@ d'accumulation des noyaux de rétropropagation ne sont **pas** vectorisées à -
 | Commande | Ce qu'elle prouve |
 |---|---|
 | `./ti_test --kernels` | bornes du tableau §3, comparaison à libm |
-| `./ti_test --engine` | déterminisme (hash), **préfixage = décodage au bit près** sur 33/33 positions, statistiques ternaires, échantillonnage |
+| `./ti_test --engine` | déterminisme (hash), **préfixage = décodage au bit près** sur 33/33 positions, statistiques ternaires |
+| `./ti_test --sampling` | la distribution tirée suit la softmax exacte (écart max 3e‑4 à T = 0,5 et 2e‑3 à T = 1,0) sur 60 000 tirages |
 | `./ti_main --gradcheck` | rétropropagation : 10 directions conjuguées + 16 sondes individuelles vs différences finies centrées — **TOUT PASSE** en petite *et* en pleine géométrie |
 | `./ti_main --fidelity` | §4, site par site |
 | `./ti_main --fpcheck` | aucune instruction flottante dans le moteur |
 | `./ti_main --pack` | format de fichier modèle, 2 bits/poids |
-| `tools/ti_reference.py` | référence numpy float64 **indépendante** (aucun code C partagé) : perte à 2e‑10, gradients à 3e‑7 |
+| `./ti_dump` + `tools/ti_reference.py` | référence numpy float64 **indépendante** (aucun code C partagé) : perte à 2e‑09, gradients à 2,5e‑07, différences finies float64 concordantes |
+
+La référence numpy se rejoue en deux commandes, sur une petite géométrie
+(`-DTI_T=8 -DTI_D=8 -DTI_L=2 -DTI_H=2 -DTI_F=8 -DTI_V=8 -DTI_B=2`) : `ti_dump`
+écrit les entrées, les sorties et tous les gradients tenseur par tenseur,
+`ti_reference.py` recalcule les mêmes quantités en float64 à partir des mêmes
+entrées et compare. Il conclut « TOUT PASSE » ou « ÉCHEC » et sort en code non
+nul si un seuil est franchi — la capacité du test à échouer a été vérifiée en
+faussant volontairement un gradient de 0,1 %. C'est aussi ce rejeu qui a remplacé
+`--attncheck` (mode supprimé) : il vérifie les poids d'attention avec le reste du
+graphe, et non par un seuil de convergence arbitraire.
 
 Le gradcheck tourne aussi en **petite géométrie** (`-DTI_T=32 -DTI_D=64 -DTI_L=2
 -DTI_H=2 -DTI_F=128`) : les deux échelles passent, ce qui écarte l'hypothèse d'un
@@ -161,22 +189,29 @@ accord qui ne tiendrait qu'à une taille particulière.
 | `ti_main.c` | harnais : `--train --bench --gradcheck --fidelity --ptq --sample --export --pack --fpcheck` |
 | `ti_test.c` | bornes des noyaux et invariants du moteur |
 | `ti_probe.c` | autopsie d'un checkpoint : fp32 / ternaire / entier, pour savoir **quel** étage perd l'information |
+| `ti_dump.c` | vidage d'une petite géométrie (entrées, sorties, tous les gradients) pour la référence numpy `tools/ti_reference.py` |
 
 Statuts de fichiers : `MIT1` = modèle entier exporté (embeddings int8, **poids
-ternaires compactés à 2 bits**, requantifications, échelles de résidu par couche)
-— 468 920 octets pour 3,05 bits/poids, requants inclus ; `TIF1` = checkpoint
-d'entraînement (maîtres fp32 + moments Adam + échelles). Le format est versionné :
-un fichier au format antérieur est **refusé** au chargement plutôt que lu de
-travers.
+ternaires compactés à 2 bits**, requantifications, échelles de résidu par couche,
+échelle de sortie `swq[V]` et `logit_scale`) — 469 948 octets pour 3,06 bits/poids,
+requants inclus ; `TIF1` = checkpoint d'entraînement (maîtres fp32 + moments Adam
++ échelles). Le format est versionné (`hdr[9]`) : v1 et v0 sont **refusés** au
+chargement plutôt que lus de travers, v2 est lu avec un avertissement (il n'a pas
+d'échelle de sortie, donc l'échantillonnage y est à une température
+approximative), v3 est la version courante.
+
+La température d'échantillonnage dépend de `swq`/`logit_scale` : c'est ce qui a
+fait passer le format de v2 à v3. Un fichier v3 décrit donc à la fois les poids
+et l'échelle physique des logits, et `--temp` y est une température au sens
+habituel (unité Q8).
 
 ## 8. Défauts connus (non cachés)
 
-* `ti_lin_dw` alloue/libère le transposé à chaque appel (perf, pas correction).
-* Mode `--attncheck` : seuil de convergence obsolète, remplacé par
-  `tools/ti_reference.py` ; ne pas s'en servir comme critère.
-* L'unité de `sc[]` dans `ti_int_sample` (réciproque normalisée) n'a pas été
-  revérifiée depuis la réécriture de la softmax — à ce stade elle ne change que
-  la température effective de l'échantillonnage.
+* Le moteur ne fait pas de `top-k`/`top-p` : seul le tirage à température est
+  implémenté. L'accord avec la softmax exacte est mesuré sur une distribution
+  synthétique à 8 classes (`lg[v] = −4v`, le cas que le test sait calculer en
+  float64) : écart maximal 3e‑4 à T = 0,5 et 2e‑3 à T = 1,0. Rien ne prouve que
+  l'accord tienne aussi bien sur la queue d'une distribution à 256 classes.
 * L'entraînement QAT converge plus lentement que le fp32 ; le pas d'apprentissage
   doit décroître vite (les runs à pas constant plafonnent ~0,9 nat au-dessus).
   Ce n'est pas corrigé, c'est mesuré.

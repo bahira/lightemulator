@@ -64,10 +64,13 @@ static inline uint32_t ti_norm_mant(uint32_t x, int *d_out) {
  * Graines linéaires minimax (moindres carrés sur 200k points) — 3 itérations
  * suffisent pour saturer la précision du format.
  */
-#define TI_RS_A ((int64_t)10526313 << 8)   /* graine Q28 : (A + B·yq) >> 10 */
-#define TI_RS_B ((int64_t)(-146) << 8)
-#define TI_RC_A ((int64_t)92283 << 8)
-#define TI_RC_B ((int64_t)(-2) << 8)
+/* Les constantes négatives sont écrites avec une multiplication par 2^8 : un
+ * décalage à gauche d'une valeur négative est un comportement indéfini en C
+ * (-Wshift-negative-value), et la valeur obtenue est identique. */
+#define TI_RS_A ((int64_t)10526313 * 256)  /* graine Q28 : (A + B·yq) >> 10 */
+#define TI_RS_B ((int64_t)(-146) * 256)
+#define TI_RC_A ((int64_t)92283 * 256)
+#define TI_RC_B ((int64_t)(-2) * 256)
 
 static inline int64_t ti_isqrt_q28(uint32_t yq) {
     int64_t r = (TI_RS_A + TI_RS_B * (int64_t)yq) >> 10;
@@ -307,9 +310,13 @@ static inline int32_t ti_softmax_i8_row(const int32_t *__restrict s, int n,
     for (int i = 0; i < n; i++) {
         const int32_t d = s[i] - mx;                        /* ≤ 0 */
         /* argument de 2^x en Q12 : x = d·log2(e) ⇒ t = d·5909 (log2e·2^12).
-         * Sous d < −21.5 l'exponentielle est déjà sous 2^-31 : 0 franc. */
-        const int32_t t = (d < -250000) ? -1 : (int32_t)((int64_t)d * 5909);
-        const int32_t p = ti_exp2_q15(t);
+         * Le seuil porte sur d (échelle ln) : d < −250000 est inatteignable en
+         * pratique (e^−250000 = 0), c'est un garde-fou contre un accumulateur
+         * absurde. Dans ce cas le résultat exact de la limite est 0 ; la version
+         * antérieure écrivait −1, soit 2^(−1/4096) ≈ 1,0 — l'erreur n'était pas
+         * observable (branche jamais prise en 1 000 pas d'entraînement), elle est
+         * corrigée par cohérence, pas parce qu'elle expliquait un écart mesuré. */
+        const int32_t p = (d < -250000) ? 0 : ti_exp2_q15((int32_t)((int64_t)d * 5909));
         scratch[i] = p;
         sum += p;
     }

@@ -31,3 +31,6 @@ CLOSETXT.txt
 .sweep2.mjs
 .e8.mjs
 .m.s
+
+# rejeu de la référence numpy (lm_cpu) : vidage généré par ti_dump
+lm_cpu/vidage.txt

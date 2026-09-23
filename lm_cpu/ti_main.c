@@ -204,172 +204,6 @@ static int do_gradcheck(const char *data_path) {
     return fails + fails2;
 }
 
-/* ---------------------------------------------------------------- --attncheck --
- * Vérification ISOLÉE de la rétroprop d'attention : on injecte des q,k,v
- * aléatoires dans l'état du moteur, on calcule la sortie d'attention en double
- * précision (référence indépendante de l'implémentation), puis on compare le
- * gradient analytique (ti_attn_bwd) à des différences finies centrées.
- */
-static int do_attncheck(void) {
-    TiModel m;
-    ti_model_init(&m, 1, 2477);
-    m.qat = 0;
-    const int T = m.T, D = m.D, H = m.H, HD = m.HD;
-    uint64_t rs = 0x9E3779B97F4A7C15ull;
-    float *qkv = m.QKV;                       /* couche 0 */
-    for (int i = 0; i < m.ntok * 3 * D; i++) {
-        rs ^= rs << 13; rs ^= rs >> 7; rs ^= rs << 17;
-        qkv[i] = (float)(((int)((rs >> 11) % 2001) - 1000) / 500.0);
-    }
-    float *dAO = (float *)ti_fa(sizeof(float) * (size_t)m.ntok * D);
-    for (int i = 0; i < m.ntok * D; i++) {
-        rs ^= rs << 13; rs ^= rs >> 7; rs ^= rs << 17;
-        dAO[i] = (float)(((int)((rs >> 11) % 2001) - 1000) / 500.0);
-    }
-    /* référence : sortie d'attention en double + softmax causale exacte */
-    double *p = (double *)ti_fa(sizeof(double) * T * T);
-    for (int b = 0; b < m.B; b++)
-        for (int h = 0; h < H; h++)
-            for (int t = 0; t < T; t++) {
-                const float *q = qkv + ((size_t)b * T + t) * 3 * D + h * HD;
-                double mx = -1e300;
-                for (int u = 0; u <= t; u++) {
-                    const float *k = qkv + ((size_t)b * T + u) * 3 * D + D + h * HD;
-                    double s = 0.0;
-                    for (int d = 0; d < HD; d++) s += (double)q[d] * k[d];
-                    s /= sqrt((double)HD);
-                    p[(size_t)t * T + u] = s;
-                    if (s > mx) mx = s;
-                }
-                double se = 0.0;
-                for (int u = 0; u <= t; u++) { const double e = exp(p[(size_t)t * T + u] - mx); p[(size_t)t * T + u] = e; se += e; }
-                for (int u = 0; u <= t; u++) p[(size_t)t * T + u] /= se;
-                float *att = m.ATTN + ((((size_t)0 * m.B) + b) * H + h) * TI_T * TI_T;
-                for (int u = 0; u <= t; u++) att[(size_t)t * TI_T + u] = (float)p[(size_t)t * T + u];
-            }
-    float *dQKV = (float *)ti_fa(sizeof(float) * (size_t)m.ntok * 3 * D);
-    float *dP = (float *)ti_fa(sizeof(float) * TI_T);
-    ti_attn_bwd(&m, 0, dAO, dQKV, dP);
-    /* perte scalaire L = Σ dAO·o (o recalculée en double) */
-    double L = 0.0;
-    for (int b = 0; b < m.B; b++)
-        for (int h = 0; h < H; h++)
-            for (int t = 0; t < T; t++) {
-                const float *dy = dAO + ((size_t)b * T + t) * D + h * HD;
-                for (int d = 0; d < HD; d++) {
-                    double o = 0.0;
-                    for (int u = 0; u <= t; u++) {
-                        const double *pp = p + (size_t)t * T + u;
-                        const float *vv = qkv + ((size_t)b * T + u) * 3 * D + 2 * D + h * HD;
-                        o += *pp * vv[d];
-                    }
-                    L += (double)dy[d] * o;
-                }
-            }
-    /* direction clairsemée sur qkv */
-    printf("== attncheck : rétroprop d'attention isolée (B=%d T=%d H=%d HD=%d) ==\n", m.B, T, H, HD);
-    printf("  perte scalaire de référence : %.6f\n", L);
-    for (int rep = 0; rep < 3; rep++) {
-        double *dir = (double *)ti_fa(sizeof(double) * (size_t)m.ntok * 3 * D);
-        double gv = 0.0, vn = 0.0;
-        for (int i = 0; i < m.ntok * 3 * D; i++) {
-            rs ^= rs << 13; rs ^= rs >> 7; rs ^= rs << 17;
-            const double v = ((rs >> 11) % 100u < 5u) ? (((rs >> 20) & 1) ? 1.0 : -1.0) : 0.0;
-            dir[i] = v; vn += v * v;
-            gv += (double)dQKV[i] * v;
-        }
-        const double eps = 1e-4;
-        double l1 = 0.0, l2 = 0.0;
-        for (int sign = 0; sign < 2; sign++) {
-            for (int i = 0; i < m.ntok * 3 * D; i++) qkv[i] += (float)((sign ? -eps : eps) * dir[i]);
-            /* recalcul complet de p et de L en double (mêmes formules que la référence) */
-            double Lp = 0.0;
-            for (int b = 0; b < m.B; b++)
-                for (int h = 0; h < H; h++)
-                    for (int t = 0; t < T; t++) {
-                        const float *q = qkv + ((size_t)b * T + t) * 3 * D + h * HD;
-                        double mx = -1e300;
-                        for (int u = 0; u <= t; u++) {
-                            const float *k = qkv + ((size_t)b * T + u) * 3 * D + D + h * HD;
-                            double s = 0.0;
-                            for (int d = 0; d < HD; d++) s += (double)q[d] * k[d];
-                            s /= sqrt((double)HD);
-                            p[(size_t)t * T + u] = s; if (s > mx) mx = s;
-                        }
-                        double se = 0.0;
-                        for (int u = 0; u <= t; u++) { const double e = exp(p[(size_t)t * T + u] - mx); p[(size_t)t * T + u] = e; se += e; }
-                        for (int u = 0; u <= t; u++) p[(size_t)t * T + u] /= se;
-                        const float *dy = dAO + ((size_t)b * T + t) * D + h * HD;
-                        for (int d = 0; d < HD; d++) {
-                            double o = 0.0;
-                            for (int u = 0; u <= t; u++) {
-                                const float *vv = qkv + ((size_t)b * T + u) * 3 * D + 2 * D + h * HD;
-                                o += p[(size_t)t * T + u] * vv[d];
-                            }
-                            Lp += (double)dy[d] * o;
-                        }
-                    }
-            if (sign == 0) l1 = Lp; else l2 = Lp;
-            for (int i = 0; i < m.ntok * 3 * D; i++) qkv[i] -= (float)((sign ? -eps : eps) * dir[i]);
-        }
-        const double fd = (l1 - l2) / (2.0 * eps);
-        const double rel = fabs(fd - gv) / (fabs(fd) + fabs(gv) + 1e-9);
-        printf("  direction %d (|v|=%.0f) : analytique=% .6e  FD=% .6e  rel=%.2e\n",
-               rep, sqrt(vn), gv, fd, rel);
-        /* contrôle de convergence : le quotient doit converger VERS le gradient
-         * analytique quand eps diminue (erreur O(eps²) de troncature) */
-        double prev_rel = rel;
-        int conv = 1;
-        for (int e = 1; e <= 4; e++) {
-            const double ep = eps / pow(3.0, e);
-            for (int sign = 0; sign < 2; sign++) {
-                for (int i = 0; i < m.ntok * 3 * D; i++) qkv[i] += (float)((sign ? -ep : ep) * dir[i]);
-                double Lp = 0.0;
-                for (int b = 0; b < m.B; b++)
-                    for (int h = 0; h < H; h++)
-                        for (int t = 0; t < T; t++) {
-                            const float *q = qkv + ((size_t)b * T + t) * 3 * D + h * HD;
-                            double mx = -1e300;
-                            for (int u = 0; u <= t; u++) {
-                                const float *k = qkv + ((size_t)b * T + u) * 3 * D + D + h * HD;
-                                double sc = 0.0;
-                                for (int d = 0; d < HD; d++) sc += (double)q[d] * k[d];
-                                sc /= sqrt((double)HD);
-                                p[(size_t)t * T + u] = sc; if (sc > mx) mx = sc;
-                            }
-                            double se = 0.0;
-                            for (int u = 0; u <= t; u++) { const double ex = exp(p[(size_t)t * T + u] - mx); p[(size_t)t * T + u] = ex; se += ex; }
-                            for (int u = 0; u <= t; u++) p[(size_t)t * T + u] /= se;
-                            const float *dy = dAO + ((size_t)b * T + t) * D + h * HD;
-                            for (int d = 0; d < HD; d++) {
-                                double o = 0.0;
-                                for (int u = 0; u <= t; u++) {
-                                    const float *vv = qkv + ((size_t)b * T + u) * 3 * D + 2 * D + h * HD;
-                                    o += p[(size_t)t * T + u] * vv[d];
-                                }
-                                Lp += (double)dy[d] * o;
-                            }
-                        }
-                if (sign == 0) l1 = Lp; else l2 = Lp;
-                for (int i = 0; i < m.ntok * 3 * D; i++) qkv[i] -= (float)((sign ? -ep : ep) * dir[i]);
-            }
-            const double f2 = (l1 - l2) / (2.0 * ep);
-            const double r2 = fabs(f2 - gv) / (fabs(f2) + fabs(gv) + 1e-9);
-            printf("      eps=%.1e : FD=% .6e  rel=%.2e\n", ep, f2, r2);
-            if (!(r2 <= prev_rel * 1.01 || r2 < 1e-6)) conv = 0;
-            prev_rel = r2;
-        }
-        printf("      convergence vers le gradient analytique : %s\n", conv ? "OUI" : "NON");
-        free(dir);
-        if (!conv) { free(p); free(dAO); free(dQKV); free(dP); ti_model_free(&m); return 1; }
-    }
-    printf("  => TOUT PASSE (erreur relative < 1e-4)\n");
-    free(p); free(dAO); free(dQKV); free(dP);
-    ti_model_free(&m);
-    return 0;
-}
-
-/* -------------------------------------------------------------------- bench */
 static void do_bench(const char *data_path, const char *ckpt) {
     long len;
     unsigned char *data = slurp(data_path, &len);
@@ -432,10 +266,11 @@ static void do_bench(const char *data_path, const char *ckpt) {
         float *X = (float *)ti_fa(sizeof(float) * (size_t)n * K);
         float *Y = (float *)ti_fa(sizeof(float) * (size_t)n * N);
         float *dW = (float *)ti_fa(sizeof(float) * (size_t)N * K);
+        float *Yt = (float *)ti_fa(sizeof(float) * (size_t)N * n);
         for (int i = 0; i < n * K; i++) X[i] = 0.5f * sinf((float)i);
         for (int i = 0; i < n * N; i++) Y[i] = 0.5f * cosf((float)i);
         double tA = now_s();
-        ti_lin_dw(X, Y, dW, n, K, N, NULL);
+        ti_lin_dw(X, Y, dW, n, K, N, NULL, Yt);
         tA = now_s() - tA;
         /* référence naïve (même ordre de sommation que la version bloquée) */
         memset(dW, 0, sizeof(float) * (size_t)N * K);
@@ -449,6 +284,7 @@ static void do_bench(const char *data_path, const char *ckpt) {
                 for (int k = 0; k < K; k++) dw[k] += gy * x[k];
             }
         tB = now_s() - tB;
+        free(Yt);
         printf("  gradient de poids %d×%d×%d       : %6.2f ms bloqué vs %6.2f ms naïf  (×%.2f)\n",
                n, K, N, 1e3 * tA, 1e3 * tB, (tB > 0 ? tB / tA : 0.0));
         free(X); free(Y); free(dW);
@@ -456,7 +292,6 @@ static void do_bench(const char *data_path, const char *ckpt) {
     free(ids); free(tgt); free(data);
     ti_model_free(&m);
 }
-
 
 /* --------------------------------------------------------------- fidélité -- */
 /* Compare, site par site, le moteur entier au graphe fp32 ÉQUIVALENT (mêmes
@@ -717,16 +552,19 @@ static void do_sample(const char *path, const char *prompt, int ntok, int temp_q
     if (ti_int_load(&e, path, 1) < 0) { fprintf(stderr, "ti_main: modèle illisible %s\n", path); exit(1); }
     TiRng rng = { seed ? seed : 0x9E3779B97F4A7C15ull };
     ti_int_reset(&e);
-    printf("== génération (T=%d, température %.2f) ==\n%s", e.T, temp_q8 / 256.0, prompt);
+    /* « T » désigne ici la LONGUEUR DE CONTEXTE du modèle, pas la température :
+     * l'unité de la température est le Q8 (--temp 256 = T 1.00). */
+    printf("== génération (contexte T=%d, température %.2f soit --temp %d) ==\n%s",
+           e.T, temp_q8 / 256.0, temp_q8, prompt);
     const size_t plen = strlen(prompt);
     for (size_t i = 0; i < plen && e.ncache < e.T; i++) ti_int_step(&e, (unsigned char)prompt[i], e.acc);
     for (int i = 0; i < ntok && e.ncache < e.T; i++) {
-        const size_t plen2 = plen;
-        const int last = (i == 0 && plen2)
-                       ? (unsigned char)prompt[plen2 - 1]
-                       : (unsigned char)'\0';
-        (void)last;
-        const int id = ti_int_sample(&e, e.acc, temp_q8, &rng);
+        /* facteur global : logit physique = log32·(swq/4096)·logit_scale, donc
+         * mult_q24 = logit_scale·2^12 (voir ti_int_sample) */
+        int32_t mult = (int32_t)((double)e.logit_scale * 4096.0);
+        if (mult < 1) mult = 1;
+        if (mult > (int32_t)1 << 30) mult = (int32_t)1 << 30;
+        const int id = ti_int_sample(&e, e.acc, temp_q8, &rng, e.swq, mult);
         ti_int_step(&e, id, e.acc);
         putchar(id >= 32 && id < 127 ? id : (id == 10 ? '\n' : '.'));
     }
@@ -752,7 +590,7 @@ static int do_fpcheck(void) {
           "  ti_int_run(m, ids, B, n, 0, lg, 2);\n"
           "  ti_attn_layer(m, 0, 0, 0, 1);\n"
           "  ti_int_step(m, 65, lg);\n"
-          "  return ti_int_sample(m, lg, 200, (TiRng*)0);\n"
+          "  return ti_int_sample(m, lg, 200, (TiRng*)0, NULL, 1<<24);\n"
           "}\n", f);
     fclose(f);
     char cmd[512];
@@ -825,7 +663,7 @@ static void do_pack(const char *path) {
 
 /* -------------------------------------------------------------------- main -- */
 static void usage(void) {
-    puts("usage: ti_main [--gradcheck|--train N|--bench|--sample \"p\" N|--pack|--fpcheck|--eval] [options]");
+    puts("usage: ti_main [--train N|--gradcheck|--fidelity|--bench|--ptq|--sample \"p\" N|--pack|--fpcheck|--eval] [options]");
     puts("  --data f --val f --lr x --bs B --seed S --ckpt f --save f --export f.ti --calib P --fp32");
 }
 
@@ -846,7 +684,6 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--pack")) mode = "--pack";
         else if (!strcmp(argv[i], "--fidelity")) mode = "--fidelity";
         else if (!strcmp(argv[i], "--fpcheck")) mode = "--fpcheck";
-        else if (!strcmp(argv[i], "--attncheck")) mode = "--attncheck";
         else if (!strcmp(argv[i], "--eval")) mode = "--eval";
         else if (!strcmp(argv[i], "--sample")) {
             mode = "--sample";
@@ -875,7 +712,6 @@ int main(int argc, char **argv) {
     if (!strcmp(mode, "--gradcheck")) return do_gradcheck(data_path);
     if (!strcmp(mode, "--fidelity")) return do_fidelity(data_path, 8);
     if (!strcmp(mode, "--fpcheck")) return do_fpcheck();
-    if (!strcmp(mode, "--attncheck")) return do_attncheck();
     if (!strcmp(mode, "--bench")) { do_bench(data_path, ckpt_in); return 0; }
     if (!strcmp(mode, "--pack")) { do_pack(export_path ? export_path : "/tmp/spear_t1.ti"); return 0; }
     if (!strcmp(mode, "--sample")) { do_sample(export_path ? export_path : "/tmp/spear_t1.ti", prompt, smp, temp_q8, seed); return 0; }

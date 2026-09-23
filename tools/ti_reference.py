@@ -11,6 +11,11 @@ lit un vidage produit par ti_dump.c et compare :
   3. des différences finies centrées calculées en float64 avec des perturbations
      exactes (aucune limite de précision) — l'arbitre en cas de désaccord.
 
+Le script ne se contente pas d'afficher : il compare aux seuils, conclut
+« TOUT PASSE » ou « ÉCHEC » et sort en code non nul en cas d'échec (utilisable
+en CI). Seuils : perte 1e-6, pire gradient 1e-5, différences finies 1e-4 — les
+valeurs mesurées sont ~3 ordres de grandeur en dessous.
+
 Usage : python3 tools/ti_reference.py <vidage.txt>
 """
 import sys
@@ -187,8 +192,9 @@ def main():
     perte, dlogits, cache = forward(P, ids, tgt, d)
     G = backward(P, ids, tgt, d, dlogits, cache)
     print(f"== référence numpy float64 (T={d['T']} D={d['D']} L={d['L']} F={d['F']} V={d['V']}) ==")
+    rel_perte = abs(perte - d["loss"]) / abs(perte)
     print(f"  perte  C (float32) : {d['loss']:.8f}")
-    print(f"  perte  numpy (f64) : {perte:.8f}   écart relatif {abs(perte - d['loss']) / abs(perte):.2e}")
+    print(f"  perte  numpy (f64) : {perte:.8f}   écart relatif {rel_perte:.2e}")
     gmax = 0.0
     for nom in NOMS:
         a = G[nom].ravel()
@@ -199,6 +205,7 @@ def main():
     print(f"  pire tenseur : {gmax:.3e}")
     # différences finies en float64 (arbitre)
     print("  -- différences finies float64 (perturbations exactes, h=1e-5) --")
+    df_numpy_max = df_c_max = 0.0
     for nom, idx in [("g1", (0, 3)), ("g2", (0, 5)), ("wqkv", (0, 2, 1)), ("wo", (0, 1, 4)),
                      ("w1", (0, 3, 2)), ("w2", (0, 2, 6)), ("wout", (2, 3)), ("pos", (1, 5)),
                      ("emb", (3, 2)), ("gf", (4,))]:
@@ -215,9 +222,24 @@ def main():
         an_c = d[("grd", nom)][np.ravel_multi_index(idx, G[nom].shape)]
         rel = abs(fd - an) / (abs(fd) + abs(an) + 1e-30)
         relc = abs(fd - an_c) / (abs(fd) + abs(an_c) + 1e-30)
+        df_numpy_max = max(df_numpy_max, rel)
+        df_c_max = max(df_c_max, relc)
         print(f"     {nom}{idx}: DF={fd: .6e}  numpy={an: .6e} (rel {rel:.1e})  "
               f"C={an_c: .6e} (rel {relc:.1e})")
-    return 0
+    # ------------------------------------------------------------- contrôles
+    seuils = [("perte (C vs numpy f64)", rel_perte, 1e-6),
+              ("pire gradient (C vs numpy f64)", gmax, 1e-5),
+              ("différences finies vs numpy", df_numpy_max, 1e-4),
+              ("différences finies vs C", df_c_max, 1e-4)]
+    print("  -- contrôles --")
+    fails = 0
+    for nom, valeur, seuil in seuils:
+        ok = valeur <= seuil
+        if not ok:
+            fails += 1
+        print(f"  {nom:<32}: {valeur:.2e} ≤ {seuil:.0e}   {'PASS' if ok else 'ÉCHEC'}")
+    print(f"  => {'TOUT PASSE (0 échec)' if not fails else f'ÉCHEC ({fails})'}")
+    return 1 if fails else 0
 
 
 if __name__ == "__main__":

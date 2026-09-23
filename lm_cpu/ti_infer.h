@@ -90,6 +90,11 @@ typedef struct {
     TiRq *rq_ao;                     /* [L][D]  */
     TiRq (*rq_score)[TI_H];          /* [L][H] -> log2 Q12 */
     TiRq *rq_res;                    /* [L] : passage S_res[l] -> S_res[l+1] (résidu) */
+    /* échelle de sortie pour l'échantillonnage : le logit physique vaut
+     * log32[v]·logit_scale·swq[v]/4096. Sans elle, la température s'applique à
+     * l'entier brut (facteur ~12 d'erreur mesuré). */
+    int32_t *swq;                    /* [V] sw_out/max(sw_out) en Q12 */
+    float logit_scale;               /* S_final·max(sw_out) */
     /* cache KV : [B][L][H][T][HD] pour K et V */
     int8_t *kcache, *vcache;
     int ncache;
@@ -163,6 +168,9 @@ static void ti_int_alloc(TiInt *m, int B) {
     m->rq_ao  = (TiRq *)ti_xalloc(sizeof(TiRq) * L * D);
     m->rq_score = (TiRq (*)[TI_H])ti_xalloc(sizeof(TiRq) * L * H);
     m->rq_res = (TiRq *)ti_xalloc(sizeof(TiRq) * L);
+    m->swq = (int32_t *)ti_xalloc(sizeof(int32_t) * V);
+    for (int v = 0; v < V; v++) m->swq[v] = 4096;
+    m->logit_scale = 1.0f;
     m->kcache = (int8_t *)ti_xalloc((size_t)B * L * H * T * TI_HD);
     m->vcache = (int8_t *)ti_xalloc((size_t)B * L * H * TI_HD * T);   /* transposé [HD][T] */
     m->acc    = (int32_t *)ti_xalloc(sizeof(int32_t) * T * maxacc);
@@ -177,7 +185,7 @@ static void ti_int_free(TiInt *m) {
     free(m->rq_g1); free(m->rq_g2);
     free(m->wqkv); free(m->wo); free(m->w1); free(m->w2); free(m->wout);
     free(m->rq_qkv); free(m->rq_wo); free(m->rq_w1); free(m->rq_sq); free(m->rq_w2);
-    free(m->rq_ao); free(m->rq_score); free(m->rq_res);
+    free(m->rq_ao); free(m->rq_score); free(m->rq_res); free(m->swq);
     free(m->kcache); free(m->vcache);
     free(m->acc); free(m->scores); free(m->scr32); free(m->oacc);
     memset(m, 0, sizeof(*m));
@@ -393,30 +401,60 @@ static inline uint64_t ti_rng_u64(TiRng *r) {
     return z ^ (z >> 31);
 }
 
-static int ti_int_sample(const TiInt *m, const int32_t *logits, int temperature_q8, TiRng *rng) {
+/* Échantillonnage entier.
+ *
+ * La température s'applique au logit PHYSIQUE, pas à l'entier brut : le moteur
+ * produit des accumulateurs int32 dont l'échelle physique vaut
+ * S_final·sw_out[v] — une échelle PAR CLASSE. Appliquer la température à
+ * l'entier brut revient donc à chauffer/refroidir d'un facteur inconnu (mesuré
+ * ici : ~12× trop froid, d'où une génération qui répétait le même octet à
+ * T=1,0). On passe donc :
+ *   swq[v]     : sw_out[v] en Q12 par rapport à max(sw_out) (NULL ⇒ 1, logits bruts)
+ *   mult_q24   : facteur global tel que le logit physique vaille
+ *                logits[v]·swq[v]·mult_q24 >> 24. Avec swq en Q12 (4096 = 1) et
+ *                sw_out réellement utilisé = swq/4096·max(sw_out) :
+ *                  physique = logits·swq·S_final·max(sw_out) / 4096
+ *                donc mult_q24 = S_final·max(sw_out)·2^12 — un Q12, pas un Q24.
+ *                C'est exactement l'erreur qui rendait la température inopérante
+ *                (deux fois 4096) ; le test synthétique de ti_test verrouille la
+ *                convention : swq=NULL et mult_q24=2^24 ⇒ physique = logits.
+ * Le score transmis à la softmax est en unités NÉPÉRIENNES (la softmax fait
+ * elle-même la conversion vers l'argument de 2^x). Arithmétique int64 : aucun
+ * débordement pour |logits| ≤ 2^20 et scale_q24 ≤ 2^32.
+ */
+static int ti_int_sample(const TiInt *m, const int32_t *logits, int temperature_q8, TiRng *rng,
+                         const int32_t *swq, int32_t mult_q24) {
     const int V = m->V;
-    if (temperature_q8 <= 0) {                       /* glouton : argmax entier */
-        int best = 0;
-        for (int v = 1; v < V; v++) if (logits[v] > logits[best]) best = v;
-        return best;
+    /* d[v] = logit entier × échelle Q12 de sa classe : max et argmax portent
+     * sur le logit physique, pas sur l'entier brut */
+    int64_t mx = 0;
+    int best = 0;
+    for (int v = 0; v < V; v++) {
+        const int64_t d = (int64_t)logits[v] * (swq ? swq[v] : 1);
+        if (v == 0 || d > mx) { mx = d; best = v; }
     }
-    /* score_j = logit_j·(1/T)·log2e·2^12 ; 1/T en Q8 */
-    int32_t mx = logits[0];
-    for (int v = 1; v < V; v++) if (logits[v] > mx) mx = logits[v];
+    if (temperature_q8 <= 0) return best;               /* glouton : argmax entier */
     int32_t *sc = (int32_t *)ti_xalloc(sizeof(int32_t) * V);
     int8_t *w8 = (int8_t *)ti_xalloc(V);
+    int kk = 0;
+    const int32_t rc = ti_rcp_norm((uint32_t)temperature_q8, &kk);   /* ≈ 2^kk/temp_q8 */
     for (int v = 0; v < V; v++) {
-        /* (logit − mx)·log2e·2^12·(256/T) / 256, le tout en arithmétique entière */
-        /* (logit−mx)·log2e·2^12 / T  — réciproque normalisée : aucune division */
-        int kk = 0;
-        const int32_t rc = ti_rcp_norm((uint32_t)temperature_q8, &kk);
-        const int64_t num = (int64_t)(logits[v] - mx) * 5909 * rc;
-        sc[v] = (int32_t)(num >> (12 + kk + 8));
+        const int64_t d = (int64_t)logits[v] * (swq ? swq[v] : 1);
+        /* Deux étapes, chacune bornée :
+         *   1) L = (d − mx)·mult_q24/2^24           = logit physique (échelle ln)
+         *      |L| ≤ 2^21·2^12·2^30/2^24 = 2^39
+         *   2) score = L·256/temp_q8 = L·rc/2^(kk−8) = logit ÷ température
+         *      |score| ≤ 2^39·2^14 = 2^53  → int64, aucun débordement.
+         * Le décalage (24+kk−8) d'origine oubliait le /4096 du Q12 : les scores
+         * sortaient 4096× trop grands, la softmax saturait en argmax et la
+         * température était sans effet — visible à l'œil sur la génération. */
+        const int64_t L = ti_shr_rnd((d - mx) * (int64_t)mult_q24, 24);
+        sc[v] = (int32_t)ti_shr_rnd(L * rc, kk - 8);
     }
     ti_softmax_i8_row(sc, V, w8, m->scr32);
     int32_t tot = 0;
     for (int v = 0; v < V; v++) tot += w8[v];
-    if (tot <= 0) { free(sc); free(w8); return 0; }
+    if (tot <= 0) { free(sc); free(w8); return best; }
     const uint64_t pick = ti_rng_u64(rng) % (uint64_t)tot;
     uint64_t acc = 0;
     int out = V - 1;
@@ -435,8 +473,10 @@ static int ti_int_save(const TiInt *m, const char *path) {
      * couche). Un fichier sans rq_res mettait le résidu entrant à zéro à chaque
      * couche (rq_res = {0,1} ⇒ xin = 0) : les logits devenaient indépendants de
      * la position et la génération ne produisait qu'un seul octet répété.
-     * v2 : matrices ternaires compactées à 2 bits/poids au lieu d'1 octet. */
-    const int hdr[10] = { (int)TI_MAGIC, m->T, m->D, m->L, m->H, m->HD, m->F, m->V, 1, 2 };
+     * v2 : matrices ternaires compactées à 2 bits/poids au lieu d'1 octet.
+     * v3 : échelle de sortie (swq Q12 par classe + facteur global) sans laquelle
+     *      l'échantillonnage applique la température à l'entier brut. */
+    const int hdr[10] = { (int)TI_MAGIC, m->T, m->D, m->L, m->H, m->HD, m->F, m->V, 1, 3 };
     fwrite(hdr, sizeof(int), 10, f);
     const size_t D = m->D, L = m->L, F = m->F, V = m->V, T = m->T, H = m->H;
     fwrite(m->emb, 1, (size_t)V * D, f);
@@ -468,6 +508,8 @@ static int ti_int_save(const TiInt *m, const char *path) {
     fwrite(m->rq_ao, sizeof(TiRq), L * D, f);
     fwrite(m->rq_score, sizeof(TiRq), L * H, f);
     fwrite(m->rq_res, sizeof(TiRq), L, f);
+    fwrite(m->swq, sizeof(int32_t), V, f);
+    fwrite(&m->logit_scale, sizeof(float), 1, f);
     fclose(f);
     return 0;
 }
@@ -510,8 +552,14 @@ static int ti_int_load(TiInt *m, const char *path, int B) {
         fprintf(stderr, "ti: fichier au format v1 (poids déployés) — réexportez-le\n");
         fclose(f); return -5;
     }
-    if (hdr[9] >= 2) {
+    if (hdr[9] >= 3) {
         got += fread(m->rq_res, sizeof(TiRq), L, f);
+        got += fread(m->swq, sizeof(int32_t), V, f);
+        got += fread(&m->logit_scale, sizeof(float), 1, f);
+    } else if (hdr[9] == 2) {
+        got += fread(m->rq_res, sizeof(TiRq), L, f);
+        fprintf(stderr, "ti: avertissement — fichier v2 sans échelle de sortie : "
+                        "l'échantillonnage sera à une température approximative\n");
     } else {
         /* ancien fichier : pas d'échelle de résidu. On refuse plutôt que de
          * faire tourner un modèle aux logits indépendants de la position. */

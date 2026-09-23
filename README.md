@@ -98,7 +98,7 @@ Newton for the RMS norm, integer `exp2` for softmax. `--fpcheck` disassembles
 `ti_int_run`/`ti_int_step` and fails if a single FP instruction appears:
 
 ```
-instructions examined: 2395 ; floating-point instructions in the inference path: 0
+instructions examined: 2411 ; floating-point instructions in the inference path: 0
 ```
 
 The training forward pass **is** the integer engine (no train/inference divergence),
@@ -121,10 +121,16 @@ Kernel accuracy is bounded by measurement, not hope: `exp2` abs ≤ 1.15e‑4,
 `rsqrt` rel ≤ 1.02e‑3, `rcp` rel ≤ 7.4e‑5, AVX2 dot/GEMM **bit-exact** against scalar,
 softmax 0.00 int8 step. Gradcheck: 10 conjugate directions + 16 individual probes
 against central finite differences, **all pass** in both small and full geometry.
+An independent float64 numpy replay (no shared C code) reproduces the loss to 2e‑09
+and every tensor gradient to 2.5e‑07. Sampling is checked the same way: the drawn
+distribution matches the exact softmax at two temperatures. Temperature lives in
+the model file (each logit has a physical scale stored as `swq[V]`+`logit_scale`),
+so `--temp 256` means T = 1.00 for any exported model.
 
 ```
 cc -O3 -funroll-loops -march=native -ffast-math -fopenmp -o ti_main lm_cpu/ti_main.c -lm
-./ti_main --train 3000 --data data/shakespeare.txt --holdout 111539 --save m.ckpt
+./ti_main --train 3000 --data data/shakespeare.txt --holdout 111539 --save m.ckpt --export m.ti
+./ti_main --sample "To be or not" 220 --export m.ti --temp 160 --seed 7
 ./ti_main --gradcheck ; ./ti_main --fidelity ; ./ti_main --fpcheck ; ./ti_main --bench
 ```
 

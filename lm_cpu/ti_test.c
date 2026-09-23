@@ -253,8 +253,8 @@ static void test_engine(void) {
     TiRng r1 = { 42 }, r2 = { 42 };
     int same = 1, inrange = 1;
     for (int i = 0; i < 200; i++) {
-        const int a = ti_int_sample(&m, lg, 256, &r1);       /* T = 1.0 (Q8) */
-        const int b = ti_int_sample(&m, lg, 256, &r2);
+        const int a = ti_int_sample(&m, lg, 256, &r1, NULL, 1 << 24);   /* T = 1.0 (Q8) */
+        const int b = ti_int_sample(&m, lg, 256, &r2, NULL, 1 << 24);
         if (a != b) same = 0;
         if (a < 0 || a >= 256) inrange = 0;
     }
@@ -266,6 +266,51 @@ static void test_engine(void) {
 }
 
 /* ------------------------------------------- 3. dump pour référence Python -- */
+/* La température est le seul paramètre libre de l'échantillonnage : la
+ * distribution produite doit suivre la softmax exacte à cette température. Un
+ * facteur log2e oublié dans la conversion des scores change la température
+ * effective de 31 % et se voit immédiatement ici (c'est ce test qui manquait). */
+static void test_sampling(void) {
+    /* Le cas de test est choisi pour que 127 niveaux int8 la représentent bien
+     * (décroissance rapide) — une traîne de probabilités n'est pas représentable
+     * en int8, ce n'est pas un bug.
+     * Ce test attrape un facteur d'échelle perdu dans la conversion des scores :
+     * mesuré, les deux erreurs possibles (×log2e et décalage de sens) donnent une
+     * distribution plate (p[0] ≈ 1/256 au lieu de 0,98) ou figée. */
+    printf("== échantillonnage : distribution vs softmax exacte ==\n");
+    char buf[256];
+    TiInt m;
+    ti_int_alloc(&m, 1);
+    int32_t *lg = m.acc;
+    for (int v = 0; v < m.V; v++) lg[v] = -4 * v;          /* p[0] = 1−e^−4, p[1] = e^−4−e^−8… */
+    const int NT = 60000;
+    for (int ti = 0; ti < 2; ti++) {
+        const int temp_q8 = ti ? 256 : 128;                /* T = 1,0 puis 0,5 */
+        const double T = temp_q8 / 256.0;
+        double p[TI_V], sum = 0.0, mx = -1e30;
+        for (int v = 0; v < m.V; v++) if (lg[v] > mx) mx = lg[v];
+        for (int v = 0; v < m.V; v++) { p[v] = exp(((double)lg[v] - mx) / T); sum += p[v]; }
+        double H = 0.0;
+        for (int v = 0; v < m.V; v++) { p[v] /= sum; if (p[v] > 1e-12) H -= p[v] * log(p[v]); }
+        long cnt[TI_V] = { 0 };
+        TiRng rng = { 0x243F6A8885A308D3ull };
+        for (int i = 0; i < NT; i++) cnt[ti_int_sample(&m, lg, temp_q8, &rng, NULL, 1 << 24)]++;
+        double dev[3] = { 0, 0, 0 }, Hs = 0.0;
+        for (int v = 0; v < m.V; v++) {
+            const double e = (double)cnt[v] / NT;
+            if (v < 3) dev[v] = fabs(e - p[v]);
+            if (e > 1e-12) Hs -= e * log(e);
+        }
+        const double dmax = dev[0] > dev[1] ? (dev[0] > dev[2] ? dev[0] : dev[2])
+                                            : (dev[1] > dev[2] ? dev[1] : dev[2]);
+        const double dH = fabs(Hs - H);
+        snprintf(buf, sizeof(buf), "T=%.2f : p0 écart %.4f, p1 %.4f, p2 %.4f (max %.4f) ; "
+                 "entropie %.3f vs exacte %.3f", T, dev[0], dev[1], dev[2], dmax, Hs, H);
+        chk("distribution = softmax(T)", dmax < 0.02 && dH < 0.05, buf);
+    }
+    ti_int_free(&m);
+}
+
 static void dump_logits(const char *model_path, const char *tok_path) {
     TiInt m;
     ti_int_alloc(&m, 1);
@@ -290,6 +335,7 @@ int main(int argc, char **argv) {
     const int all = (argc < 2);
     if (all || !strcmp(argv[1], "--kernels")) test_kernels();
     if (all || !strcmp(argv[1], "--engine")) test_engine();
+    if (all || !strcmp(argv[1], "--sampling")) test_sampling();
     if (all) {
         printf("\n%s (%d échec(s))\n", g_fail ? "ÉCHEC" : "TOUT PASSE", g_fail);
         return g_fail ? 1 : 0;

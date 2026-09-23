@@ -27,14 +27,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: numpy (pour la référence indépendante)
+        run: python3 -m pip install --quiet numpy
       - name: compilation
         run: |
           cd lm_cpu
           cc -O3 -funroll-loops -march=native -ffast-math -fopenmp -o ti_main ti_main.c -lm
           cc -O3 -funroll-loops -march=native -ffast-math -o ti_test ti_test.c -lm
+          cc -O3 -funroll-loops -march=native -ffast-math -o ti_dump ti_dump.c -lm \
+             -DTI_T=8 -DTI_D=8 -DTI_L=2 -DTI_H=2 -DTI_F=8 -DTI_V=8 -DTI_B=2
       - name: bornes des noyaux (vs libm)
         run: cd lm_cpu && ./ti_test --kernels
       - name: invariants du moteur (préfixage = décodage au bit près)
         run: cd lm_cpu && ./ti_test --engine
+      - name: échantillonnage (distribution vs softmax exacte)
+        run: cd lm_cpu && ./ti_test --sampling
       - name: aucune instruction flottante dans l'inférence
         run: cd lm_cpu && ./ti_main --fpcheck
+      # Référence indépendante : le graphe est réécrit en numpy float64 (aucun code
+      # C partagé) et comparé au vidage du C — perte, tous les gradients, plus des
+      # différences finies comme arbitre. Le script sort en code 1 si un seuil est
+      # franchi, donc ce test peut échouer (vérifié par un vidage volontairement
+      # faussé).
+      - name: référence numpy float64 indépendante (rejeu complet)
+        run: |
+          cd lm_cpu
+          ./ti_dump > vidage.txt
+          python3 ../tools/ti_reference.py vidage.txt
