@@ -14,8 +14,9 @@ const DroneLab = lazy(() => import('./labs/DroneLab'));
 const PnnLab = lazy(() => import('./labs/PnnLab'));
 const HoloLab = lazy(() => import('./labs/HoloLab'));
 const QuantumLab = lazy(() => import('./labs/QuantumLab'));
+const LangevinLab = lazy(() => import('./labs/LangevinLab'));
 
-type TabId = 'bpm' | 'processor' | 'ising' | 'kan' | 'fep' | 'validate' | 'spear' | 'control' | 'dispersion' | 'drones' | 'pnn' | 'holo' | 'quantum';
+type TabId = 'bpm' | 'processor' | 'ising' | 'kan' | 'fep' | 'validate' | 'spear' | 'control' | 'dispersion' | 'drones' | 'pnn' | 'holo' | 'quantum' | 'langevin';
 
 const TABS: { id: TabId; label: string; glyph: string; blurb: string }[] = [
   { id: 'bpm', label: 'Moteur de lumière', glyph: '≈', blurb: 'BPM split-step Fourier — propagation réelle dans les guides' },
@@ -31,6 +32,7 @@ const TABS: { id: TabId; label: string; glyph: string; blurb: string }[] = [
   { id: 'pnn', label: 'PNN', glyph: '⬢', blurb: 'Accélérateur photonique émulé — superposition N+C + gradient AVM (Nat. Com. 2026)' },
   { id: 'holo', label: 'Holographie', glyph: '⊛', blurb: 'Gerchberg–Saxton réel — dessinez la cible, l’hologramme de phase est calculé, quantifié, mesuré' },
   { id: 'quantum', label: 'Optique quantique', glyph: 'Ψ', blurb: 'États de Fock exacts — dip HOM, MZI photon unique, violation de Bell CHSH en direct' },
+  { id: 'langevin', label: 'Langevin', glyph: '⋯', blurb: 'Ordinateur thermodynamique génératif — gradient inverse exact, relation de fluctuation (arXiv:2506.15121)' },
 ];
 
 export default function App() {
@@ -197,6 +199,7 @@ export default function App() {
             {tab === 'pnn' && <PnnLab />}
             {tab === 'holo' && <HoloLab />}
             {tab === 'quantum' && <QuantumLab />}
+            {tab === 'langevin' && <LangevinLab />}
           </Suspense>
         </main>
 
