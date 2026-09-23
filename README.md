@@ -4,7 +4,7 @@
 
 **Physics emulator + GPT from scratch in C — every number measured, every claim verified.**
 
-[![CI](https://github.com/bahira/lightemulator/actions/workflows/ci.yml/badge.svg)](https://github.com/bahira/lightemulator/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-28%2F28-brightgreen)]() [![parity](https://img.shields.io/badge/kernel%20parity-6%2F6-brightgreen)]() [![gradcheck](https://img.shields.io/badge/gradcheck-PASS-brightgreen)]() [![license](https://img.shields.io/badge/license-MIT-blue)]()
+[![CI](https://github.com/bahira/lightemulator/actions/workflows/ci.yml/badge.svg)](https://github.com/bahira/lightemulator/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-38%2F38-brightgreen)]() [![parity](https://img.shields.io/badge/kernel%20parity-6%2F6-brightgreen)]() [![gradcheck](https://img.shields.io/badge/gradcheck-PASS-brightgreen)]() [![license](https://img.shields.io/badge/license-MIT-blue)]()
 
 **[🔬 Live verification page →](https://bahira.github.io/lightemulator/)** — run the kernels in your browser, watch the receipts appear.
 **[🎮 Full emulator demo →](https://bahira.github.io/lightemulator/demo.html)** — the 9 labs, running client-side, no install.
@@ -28,13 +28,16 @@ A hand-tuned GPT written from scratch in pure C, with AVX2 kernels faster than l
 | `gelu` — rational + analytic derivative | **×4.9** vs libm | L∞ 2.9e-3, derivative 10.8% (FD) |
 | `sigmoid` / `silu` | > upstream reference forms | L∞ 1.6e-4 / 4.0e-4 |
 | `rsqrt` — rsqrtss + Newton | ≈ libm (×0.52, honest) | **L∞ 2.7e-7** |
+| Gerchberg–Saxton holography (2D FFT phase retrieval) | RMSE 0.217 → 0.069 in 40 it (×3.1) | η = 87% measured, Parseval defect 2.8e-15 |
+| Quantum optics — HOM dip & CHSH (closed-form Fock algebra) | S_QM = 2√2 at 4.4e-16, local hidden variables ≤ 2 (200k pairs) | P(1,1)|₅₀/₅₀ = 0 exact, Σ P = 1 at 1e-16 |
 | Full training loop | 270k params, ~9300 tok/s on an i7-7660U | val loss 3.79 (chance = 4.64) |
 
 ## What's inside
 
 ```
-├── src/            the emulator — 9 labs (BPM, MZI, Ising/CIM, KAN, control,
-│                   free energy, dispersion, SPEAR kernels, validation)
+├── src/            the emulator — 11 labs (BPM, MZI, Ising/CIM, KAN, control,
+│                   free energy, dispersion, SPEAR kernels, validation,
+│                   holography, quantum optics)
 ├── lm_c/           the GPT — pure C, forward + exact backward + Adam,
 │                   hand-written AVX2 GEMM micro-kernels, exp/rsqrt/gelu/tanh
 ├── tools/          evolutionary kernel search (500+ iters/target), grounded loop
@@ -49,7 +52,7 @@ Everything in `src/physics/*.ts` is **pure TypeScript, zero dependencies** — c
 # the emulator
 npm install
 npm run dev      # 9 labs, all client-side
-npm run test     # grounded loop headless: 25 tests
+npm run test     # grounded loop headless: 38 tests
 
 # the GPT (needs gcc + OpenMP, TinyStories data in data/)
 gcc -O2 -march=native -ffast-math -fopenmp -o lm_c/lm_train.exe lm_c/lm_main.c -lm
@@ -64,7 +67,7 @@ The honest parts: attention tiling caps at ×1.05 wall time (Amdahl — skipped 
 
 ## The verification loop
 
-25 tests, each with a number: Parseval, power conservation, MZI unitarity, CIM vs exact optimum, spline derivatives, gradient checks, Sellmeier dispersion, Fresnel biaxial. Plus kernel parity 6/6 against libm, GEMM auto-tests (forward + backward, N%8 ≠ 0 included), and a gradient check against finite differences on every training run. See [`SPEAR_REPORT_2026-09-21.md`](SPEAR_REPORT_2026-09-21.md) for the full measured report and [`SHOWCASES.md`](SHOWCASES.md) for the complete quality showcase catalog.
+38 tests, each with a number: Parseval, power conservation, MZI unitarity, CIM vs exact optimum, spline derivatives, gradient checks, Sellmeier dispersion, Fresnel biaxial, Fraunhofer vs the closed-form Dirichlet kernel, Gerchberg–Saxton convergence & energy conservation, HOM dip from Fock algebra, and a measured CHSH violation (quantum S = 2√2 vs a simulated local hidden-variable model capped at 2). Plus kernel parity 6/6 against libm, GEMM auto-tests (forward + backward, N%8 ≠ 0 included), and a gradient check against finite differences on every training run. See [`SPEAR_REPORT_2026-09-21.md`](SPEAR_REPORT_2026-09-21.md) for the full measured report and [`SHOWCASES.md`](SHOWCASES.md) for the complete quality showcase catalog.
 
 ## Roadmap
 

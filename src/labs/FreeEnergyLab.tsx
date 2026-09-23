@@ -37,10 +37,16 @@ export default function FreeEnergyLab() {
   const make = useCallback(() => {
     machineRef.current = makeMachine(cfgRef.current);
     setVersion((v) => v + 1);
-  }, [version]);
+  }, []);
 
   useEffect(() => { make(); }, [make]);
-  useEffect(() => { if (live) setVersion((v) => v + 1); }, [version, live]);
+  // relaxation continue : rafraîchissement périodique du settle — PAS un
+  // effet sur `version` lui-même (boucle de mise à jour infinie, cf. React).
+  useEffect(() => {
+    if (!live) return;
+    const id = setInterval(() => setVersion((v) => v + 1), 450);
+    return () => clearInterval(id);
+  }, [live]);
 
   // background settle loop — keeps a live phasor picture
   useEffect(() => {

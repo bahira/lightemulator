@@ -11,8 +11,10 @@ const SpearLab = lazy(() => import('./labs/SpearLab'));
 const ControlLab = lazy(() => import('./labs/ControlLab'));
 const DispersionLab = lazy(() => import('./labs/DispersionLab'));
 const DroneLab = lazy(() => import('./labs/DroneLab'));
+const HoloLab = lazy(() => import('./labs/HoloLab'));
+const QuantumLab = lazy(() => import('./labs/QuantumLab'));
 
-type TabId = 'bpm' | 'processor' | 'ising' | 'kan' | 'fep' | 'validate' | 'spear' | 'control' | 'dispersion' | 'drones';
+type TabId = 'bpm' | 'processor' | 'ising' | 'kan' | 'fep' | 'validate' | 'spear' | 'control' | 'dispersion' | 'drones' | 'holo' | 'quantum';
 
 const TABS: { id: TabId; label: string; glyph: string; blurb: string }[] = [
   { id: 'bpm', label: 'Moteur de lumière', glyph: '≈', blurb: 'BPM split-step Fourier — propagation réelle dans les guides' },
@@ -20,21 +22,42 @@ const TABS: { id: TabId; label: string; glyph: string; blurb: string }[] = [
   { id: 'ising', label: 'Machine d’Ising', glyph: '⬡', blurb: 'CIM sur MaxCut, comparée à l’optimum exact' },
   { id: 'kan', label: 'KAN photonique', glyph: '◈', blurb: 'B-splines apprises, backprop vérifiée' },
   { id: 'fep', label: 'Énergie libre', glyph: '◉', blurb: 'Champs complexes apprenant par contraste d’équilibre' },
-  { id: 'validate', label: 'Validation', glyph: '✓', blurb: 'La boucle grounded — 25 tests numériques' },
+  { id: 'validate', label: 'Validation', glyph: '✓', blurb: 'La boucle grounded — 38 tests numériques' },
   { id: 'spear', label: 'Kernels SPEAR', glyph: 'ƒ', blurb: 'Activations LLM distillées en algèbre pure, benchmarkée ici' },
   { id: 'control', label: 'Contrôle', glyph: '⌖', blurb: 'IK fermée, trajectoire jerk-bornée, pendule inversé — audités & corrigés' },
   { id: 'dispersion', label: 'Dispersion', glyph: '∿', blurb: 'Sellmeier exact, GDD/TOD réparés, impulsion femtoseconde & biréfringence' },
   { id: 'drones', label: 'Drones lumineux', glyph: '➤', blurb: 'Playground — phototaxie réelle, trilatération exacte, budget de Friis' },
+  { id: 'holo', label: 'Holographie', glyph: '⊛', blurb: 'Gerchberg–Saxton réel — dessinez la cible, l’hologramme de phase est calculé, quantifié, mesuré' },
+  { id: 'quantum', label: 'Optique quantique', glyph: 'Ψ', blurb: 'États de Fock exacts — dip HOM, MZI photon unique, violation de Bell CHSH en direct' },
 ];
 
 export default function App() {
   const [tab, setTab] = useState<TabId>('bpm');
   const [clock, setClock] = useState(0);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   useEffect(() => {
     const id = setInterval(() => setClock((c) => c + 1), 1000);
     return () => clearInterval(id);
   }, []);
+
+  // ---- raccourcis clavier : ⌘K palette · chiffres 1-9,0 → 10 premiers labs
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+        return;
+      }
+      if (paletteOpen) return;
+      const tgt = e.target as HTMLElement | null;
+      if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable)) return;
+      const di = '1234567890'.indexOf(e.key);
+      if (di >= 0 && di < TABS.length) setTab(TABS[di].id);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [paletteOpen]);
 
   return (
     <div className="min-h-screen bg-[#04060d] text-slate-200 antialiased">
@@ -98,6 +121,13 @@ export default function App() {
                 </span>
                 <span className="hidden md:inline">·</span>
                 <span className="hidden tabular-nums md:inline">t+{clock}s</span>
+                <button
+                  onClick={() => setPaletteOpen(true)}
+                  title="palette de commandes (⌘K)"
+                  className="ml-1 hidden items-center gap-1 rounded bg-white/[0.04] px-1.5 py-0.5 font-mono text-[9px] text-slate-400 ring-1 ring-white/10 transition-all hover:bg-white/8 hover:text-slate-200 sm:flex"
+                >
+                  <span className="text-[10px]">⌘K</span>
+                </button>
               </div>
             </div>
 
@@ -162,8 +192,18 @@ export default function App() {
             {tab === 'control' && <ControlLab />}
             {tab === 'dispersion' && <DispersionLab />}
             {tab === 'drones' && <DroneLab />}
+            {tab === 'holo' && <HoloLab />}
+            {tab === 'quantum' && <QuantumLab />}
           </Suspense>
         </main>
+
+        {/* ------------------------------------------------ palette de commandes */}
+        {paletteOpen && (
+          <CommandPalette
+            onClose={() => setPaletteOpen(false)}
+            onSelect={(id) => { setTab(id); setPaletteOpen(false); }}
+          />
+        )}
 
         {/* ---------------------------------------------------------- footer */}
         <footer className="mt-8 border-t border-white/6 bg-black/25">
@@ -180,6 +220,8 @@ export default function App() {
                   <li>· Énergie libre cohérente : contraste d'équilibre (EP) sur champs complexes</li>
                   <li>· Contrôle audité : IK fermée, profil jerk-borné 3 régimes exacts, pendule π*</li>
                   <li>· Dispersion : dérivées de Sellmeier exactes, phase spectrale β₂ω²/2+β₃ω³/6</li>
+                  <li>· Holographie : Gerchberg–Saxton sur FFT 2D, efficacité &amp; conservation mesurées</li>
+                  <li>· Optique quantique : Fock 1–2 photons en algèbre fermée, CHSH vs variables cachées simulées</li>
                 </ul>
               </div>
               <div>
@@ -217,6 +259,80 @@ function Loading() {
       <div className="flex flex-col items-center gap-3">
         <div className="h-6 w-6 animate-spin rounded-full border-2 border-cyan-400/25 border-t-cyan-300" />
         <span className="font-mono text-[10px] text-slate-500">initialisation des solveurs…</span>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+//  Palette de commandes — ⌘K : navigation fuzzy sur les labs
+// ---------------------------------------------------------------------------
+
+function CommandPalette({ onClose, onSelect }: { onClose: () => void; onSelect: (id: TabId) => void }) {
+  const [query, setQuery] = useState('');
+  const [index, setIndex] = useState(0);
+
+  const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const matches = TABS.filter((t) => {
+    const hay = `${t.label} ${t.blurb} ${t.id}`.toLowerCase();
+    return tokens.every((tok) => hay.includes(tok));
+  });
+
+  const commit = (i: number) => {
+    const m = matches[i];
+    if (m) onSelect(m.id);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 px-4 pt-[14vh] backdrop-blur-sm"
+      onMouseDown={onClose}
+    >
+      <div
+        className="w-full max-w-md overflow-hidden rounded-xl border border-white/10 bg-[#0a0f1e] shadow-[0_30px_80px_-20px_rgba(0,0,0,1)]"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <input
+          autoFocus
+          value={query}
+          placeholder="aller au lab… (holographie, bell, ising…)"
+          onChange={(e) => { setQuery(e.target.value); setIndex(0); }}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setIndex((i) => Math.min(matches.length - 1, i + 1)); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); setIndex((i) => Math.max(0, i - 1)); }
+            else if (e.key === 'Enter') commit(index);
+            else if (e.key === 'Escape') onClose();
+          }}
+          className="w-full border-b border-white/8 bg-transparent px-4 py-3 font-mono text-[12px] text-slate-100 placeholder:text-slate-600 focus:outline-none"
+        />
+        <ul className="max-h-[46vh] overflow-y-auto p-1.5">
+          {matches.length === 0 && (
+            <li className="px-3 py-4 text-center font-mono text-[10px] text-slate-600">aucun lab ne correspond</li>
+          )}
+          {matches.map((t, i) => (
+            <li key={t.id}>
+              <button
+                onMouseEnter={() => setIndex(i)}
+                onClick={() => commit(i)}
+                className={cn(
+                  'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-all',
+                  i === index ? 'bg-cyan-400/10 ring-1 ring-cyan-400/25' : 'hover:bg-white/4',
+                )}
+              >
+                <span className={cn('w-4 text-center text-[14px]', i === index ? 'text-cyan-300' : 'text-slate-600')}>{t.glyph}</span>
+                <span className="min-w-0">
+                  <span className={cn('block font-mono text-[11px] font-semibold', i === index ? 'text-slate-100' : 'text-slate-300')}>{t.label}</span>
+                  <span className="block truncate text-[9px] text-slate-600">{t.blurb}</span>
+                </span>
+                {i === index && <span className="ml-auto shrink-0 font-mono text-[9px] text-slate-600">↵</span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className="flex items-center gap-3 border-t border-white/6 px-4 py-2 font-mono text-[9px] text-slate-600">
+          <span>↑↓ naviguer</span><span>↵ ouvrir</span><span>esc fermer</span>
+          <span className="ml-auto">1-9,0 → accès direct</span>
+        </div>
       </div>
     </div>
   );
