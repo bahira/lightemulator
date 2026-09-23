@@ -11,8 +11,9 @@ const SpearLab = lazy(() => import('./labs/SpearLab'));
 const ControlLab = lazy(() => import('./labs/ControlLab'));
 const DispersionLab = lazy(() => import('./labs/DispersionLab'));
 const DroneLab = lazy(() => import('./labs/DroneLab'));
+const PnnLab = lazy(() => import('./labs/PnnLab'));
 
-type TabId = 'bpm' | 'processor' | 'ising' | 'kan' | 'fep' | 'validate' | 'spear' | 'control' | 'dispersion' | 'drones';
+type TabId = 'bpm' | 'processor' | 'ising' | 'kan' | 'fep' | 'validate' | 'spear' | 'control' | 'dispersion' | 'drones' | 'pnn';
 
 const TABS: { id: TabId; label: string; glyph: string; blurb: string }[] = [
   { id: 'bpm', label: 'Moteur de lumière', glyph: '≈', blurb: 'BPM split-step Fourier — propagation réelle dans les guides' },
@@ -25,6 +26,7 @@ const TABS: { id: TabId; label: string; glyph: string; blurb: string }[] = [
   { id: 'control', label: 'Contrôle', glyph: '⌖', blurb: 'IK fermée, trajectoire jerk-bornée, pendule inversé — audités & corrigés' },
   { id: 'dispersion', label: 'Dispersion', glyph: '∿', blurb: 'Sellmeier exact, GDD/TOD réparés, impulsion femtoseconde & biréfringence' },
   { id: 'drones', label: 'Drones lumineux', glyph: '➤', blurb: 'Playground — phototaxie réelle, trilatération exacte, budget de Friis' },
+  { id: 'pnn', label: 'PNN', glyph: '⬢', blurb: 'Accélérateur photonique émulé — superposition N+C + gradient AVM (Nat. Com. 2026)' },
 ];
 
 export default function App() {
@@ -162,6 +164,7 @@ export default function App() {
             {tab === 'control' && <ControlLab />}
             {tab === 'dispersion' && <DispersionLab />}
             {tab === 'drones' && <DroneLab />}
+            {tab === 'pnn' && <PnnLab />}
           </Suspense>
         </main>
 
