@@ -69,6 +69,53 @@ The honest parts: attention tiling caps at ×1.05 wall time (Amdahl — skipped 
 
 44 tests, each with a number: Parseval, power conservation, MZI unitarity, CIM vs exact optimum, spline derivatives, gradient checks, Sellmeier dispersion, Fresnel biaxial, Fraunhofer vs the closed-form Dirichlet kernel, Gerchberg–Saxton convergence & energy conservation, HOM dip from Fock algebra, measured CHSH violation, Opto-Transformer SVD reconstruction & optical attention precision, and measured energy-per-token advantage. Plus kernel parity 6/6 against libm, GEMM auto-tests (forward + backward, N%8 ≠ 0 included), and a gradient check against finite differences on every training run. See [`SPEAR_REPORT_2026-09-21.md`](SPEAR_REPORT_2026-09-21.md) for the full measured report and [`SHOWCASES.md`](SHOWCASES.md) for the complete quality showcase catalog.
 
+## SPEAR-T1 — a model whose inference contains no floating point
+
+`lm_cpu/` holds a second, independent model: a byte-level transformer whose **entire
+generation path uses zero floating-point instructions** — weights ternary, activations
+int8 at static scales calibrated by the model itself, exact int32 accumulators, integer
+Newton for the RMS norm, integer `exp2` for softmax. `--fpcheck` disassembles
+`ti_int_run`/`ti_int_step` and fails if a single FP instruction appears:
+
+```
+instructions examined: 2411 ; floating-point instructions in the inference path: 0
+```
+
+The training forward pass **is** the integer engine (no train/inference divergence),
+and the result is measured, not claimed — 1000 steps, same corpus, same held-out
+validation split that training never sees:
+
+| | fp32 masters | ternary weights | **integer engine** | cost of being integer |
+|---|---|---|---|---|
+| trained **integer** (QAT) | 3.7576 | 3.7423 | **3.7494** | **+0.008 nat** |
+| trained fp32, then quantised | 2.3924 | 2.6654 | **3.3483** | +0.956 nat |
+
+Read that table twice. A model trained natively integer pays **0.008 nat** for having
+no floating-point arithmetic anywhere in its inference path — post-training
+quantisation of an fp32 model costs 0.96 nat. But the biased gradient of
+ternarisation converges worse, so the best integer model here is still the
+post-training one (3.35), and both beat the 3.79 of the 270 k-parameter fp32
+mini-GPT that was already in this repo. Honest on both counts.
+
+Kernel accuracy is bounded by measurement, not hope: `exp2` abs ≤ 1.15e‑4,
+`rsqrt` rel ≤ 1.02e‑3, `rcp` rel ≤ 7.4e‑5, AVX2 dot/GEMM **bit-exact** against scalar,
+softmax 0.00 int8 step. Gradcheck: 10 conjugate directions + 16 individual probes
+against central finite differences, **all pass** in both small and full geometry.
+An independent float64 numpy replay (no shared C code) reproduces the loss to 2e‑09
+and every tensor gradient to 2.5e‑07. Sampling is checked the same way: the drawn
+distribution matches the exact softmax at two temperatures. Temperature lives in
+the model file (each logit has a physical scale stored as `swq[V]`+`logit_scale`),
+so `--temp 256` means T = 1.00 for any exported model.
+
+```
+cc -O3 -funroll-loops -march=native -ffast-math -fopenmp -o ti_main lm_cpu/ti_main.c -lm
+./ti_main --train 3000 --data data/shakespeare.txt --holdout 111539 --save m.ckpt --export m.ti
+./ti_main --sample "To be or not" 220 --export m.ti --temp 160 --seed 7
+./ti_main --gradcheck ; ./ti_main --fidelity ; ./ti_main --fpcheck ; ./ti_main --bench
+```
+
+Full write-up, measured bounds and known defects: [`lm_cpu/README.md`](lm_cpu/README.md).
+
 ## Roadmap
 
 | Milestone | Scope | Status |
