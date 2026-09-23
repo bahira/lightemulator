@@ -78,6 +78,8 @@ Entraînement complet from scratch (forward + backward exacte + Adam) sur TinySt
 | rsqrt — rsqrtss + Newton | ×0.52 (honnête) | **L∞ 2.7e-7** |
 | Entraînement 270k params | 9300 tok/s | val loss 3.79 (hasard 4.64) |
 
+**A/B apparié NLv 4→6** (800 steps, même seed, même ordre de données, issue #5) : NLv=6 (396k params) — val FP32 **3.122 vs 3.150** (−0.028) pour **×0.67 tok/s** (9331 vs 14002). NLv=4 conservé par défaut (la rapidité gagne, le gain val est marginal à ce budget d'entraînement) ; NLv=6 disponible au rebuild.
+
 **Validations** : auto-test GEMM 4 chemins (nt + nt_t + dxd + tndw, N%8 ≠ 0 inclus) 1.4e-6 · gradcheck vs différences finies 0.0044 · parité noyaux 6/6 · 29/29 tests grounded.
 
 ### Quantization (v0.3 — documentée)
