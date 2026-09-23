@@ -16,4 +16,8 @@ export default defineConfig({
       "@": path.resolve(__dirname, "src"),
     },
   },
+  server: {
+    // preview Arena : l'app est servie sous un hôte proxifié — on l'accepte
+    allowedHosts: true,
+  },
 });

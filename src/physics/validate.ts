@@ -33,6 +33,14 @@ import {
 import { phototaxisError, trilaterationError, friisError, learningMonotonicity } from './drones';
 import { linearityError, avmCheckError, pnnBench } from './pnn';
 import { langevinGradError, fluctuationError, frozenObjectiveDecrease } from './langevin';
+import {
+  fraunhoferDirichletError, fraunhoferSincCut, ringsTarget, dotsTarget,
+  gerchbergSaxton, quantizePhase,
+} from './holography';
+import {
+  bsUnitarityDefect, homP11, homP20, homConservationDefect, homFromAmplitudes, homQuadratureError,
+  mziClosedFormError, chshS, chshStandardAngles, chshGridMax, chshHiddenVariables,
+} from './quantum';
 
 export interface TestResult {
   group: string;
@@ -78,7 +86,9 @@ export type TestId =
   | 'opt-sellmeier' | 'opt-gdd' | 'opt-pulse' | 'opt-fresnel'
   | 'drone-phototaxie' | 'drone-trilateration' | 'drone-link' | 'drone-apprentissage'
   | 'pnn-linearity' | 'pnn-grad' | 'pnn-train'
-  | 'lang-grad' | 'lang-fluctuation' | 'lang-train';
+  | 'lang-grad' | 'lang-fluctuation' | 'lang-train'
+  | 'holo-fraunhofer' | 'holo-gs' | 'holo-energy'
+  | 'qo-bs' | 'qo-hom' | 'qo-chsh';
 
 export const TEST_ORDER: TestId[] = [
   'fft-roundtrip', 'fft-parseval', 'fft-tone',
@@ -92,6 +102,8 @@ export const TEST_ORDER: TestId[] = [
   'drone-phototaxie', 'drone-trilateration', 'drone-link', 'drone-apprentissage',
   'pnn-linearity', 'pnn-grad', 'pnn-train',
   'lang-grad', 'lang-fluctuation', 'lang-train',
+  'holo-fraunhofer', 'holo-gs', 'holo-energy',
+  'qo-bs', 'qo-hom', 'qo-chsh',
 ];
 
 export function runTest(id: TestId): TestResult {
@@ -165,6 +177,73 @@ export function runTest(id: TestId): TestResult {
         'Objectif sur 24 trajectoires gelées : θ=0 vs θ entraîné (4 époques)',
         v.decrease, 0, ms, `objInit = ${v.objInit.toFixed(2)} → objFinal = ${v.objFinal.toFixed(2)} (N/2 = 48)`,
         false);
+    }
+
+    // ---- Holographie --------------------------------------------------------
+    case 'holo-fraunhofer': {
+      const { v: e1, ms: m1 } = timed(() => fraunhoferDirichletError(128, 12, 20));
+      const { v: cut, ms: m2 } = timed(() => fraunhoferSincCut(128, 12));
+      return mk('Holographie', 'Champ lointain de Fraunhofer = DFT de l’ouverture',
+        'La propagation en champ lointain calculée par FFT est exacte',
+        'Noyau de Dirichlet fermé sin(πkw/n)/sin(πk/n) — forme EXACTE de la DFT d’un rect discret (128², fente 12×20)',
+        e1, 1e-10, m1 + m2, `coupe sinc² continue (kw/n ≤ 1) : écart discret/continu mesuré ${cut.maxDiff.toExponential(2)}`);
+    }
+    case 'holo-gs': {
+      const { v: r, ms: m1 } = timed(() => gerchbergSaxton(ringsTarget(128), 40));
+      const { v: d, ms: m2 } = timed(() => gerchbergSaxton(dotsTarget(128), 40));
+      const { v: q, ms: m3 } = timed(() => quantizePhase(ringsTarget(128), r.hologramPhase, 256));
+      const improve = r.rmseHistory[0] / Math.max(r.rmse, 1e-12);
+      return mk('Holographie', 'Gerchberg–Saxton — reconstruction & efficacité',
+        'La récupération de phase converge vers un hologramme de phase pur qui reconstruit la cible',
+        'RMSE fenêtre signal mesuré avant/après 40 itérations (cible anneaux) + efficacité de diffraction mesurée (cible points, sans pertes) + perte par quantification 256 niveaux ≤ 5%',
+        Math.max(r.rmse, d.rmse, 1 - d.efficiency, 1 - q.efficiency / r.efficiency), 0.08, m1 + m2 + m3,
+        `anneaux : RMSE ${r.rmseHistory[0].toFixed(3)} → ${r.rmse.toFixed(3)} (×${improve.toFixed(1)}) · η=${(r.efficiency * 100).toFixed(1)}% · points : η=${(d.efficiency * 100).toFixed(2)}% · après quantif. 256 niv. η=${(q.efficiency * 100).toFixed(2)}%`);
+    }
+    case 'holo-energy': {
+      const { v: r, ms } = timed(() => gerchbergSaxton(ringsTarget(128), 40));
+      return mk('Holographie', 'Conservation de l’énergie à travers la boucle GS',
+        'Parseval est respecté image ⇄ hologramme : Σ|hologramme|²/n² = Σ|image|², à chaque itération',
+        'Défaut mesuré entre la puissance totale de la reconstruction et la puissance plate de l’hologramme (16 384 pixels, 40 itérations)',
+        r.energyDefect, 1e-12, ms, `η finale = ${(r.efficiency * 100).toFixed(2)}% — le reste est lumière diffractée hors fenêtre, pas perdue`);
+    }
+
+    // ---- Optique quantique --------------------------------------------------
+    case 'qo-bs': {
+      const { v: ms0, ms: m0 } = timed(() => Math.max(...[0.05, 0.2, 0.5, 0.8, 0.95].map(bsUnitarityDefect)));
+      const { v: cons, ms: m1 } = timed(() => Math.max(
+        ...[0.05, 0.2, 0.5, 0.8, 0.95].map((R) => Math.max(homConservationDefect(R), homConservationDefect(R, 0.3))),
+      ));
+      // chemin croisé : formule fermée vs développement explicite des amplitudes
+      const { v: amp, ms: m2 } = timed(() => Math.max(
+        ...[0.05, 0.2, 0.5, 0.8, 0.95].map((R) => {
+          const a = homFromAmplitudes(R);
+          return Math.max(Math.abs(a.p11 - homP11(R)), Math.abs(a.p20 - homP20(R)));
+        }),
+      ));
+      return mk('Optique quantique', 'Séparateur de faisceau — unitarité & dip HOM fermé',
+        'U†U = I sur les modes, et deux photons indiscernables 50/50 coalescent : P(1,1) = 0 exactement',
+        'Unitarité 2×2 + Σ P = 1 (5 réflectivités × 2 indiscernabilités) + formule fermée vs développement explicite (t c†+r d†)(r c†+t d†)|0⟩',
+        Math.max(ms0, cons, amp, homP11(0.5)), 1e-12, m0 + m1 + m2,
+        `P(1,1)|R=½,x²=1 = ${homP11(0.5).toExponential(1)} (dip parfait) · P(2,0) = ${homP20(0.5)} — les deux photons sortent par le même port`);
+    }
+    case 'qo-hom': {
+      const { v: qerr, ms: m1 } = timed(() => homQuadratureError());
+      const { v: mz, ms: m2 } = timed(() => mziClosedFormError());
+      return mk('Optique quantique', 'Recouvrement spectral & MZI photon unique',
+        'Le recouvrement μ(τ) des amplitudes spectrales est la Gaussienne transformée, et l’MZI suit sin²(φ/2)',
+        'Quadrature rectangulaire (512 pts, ±7σ) vs forme fermée |μ|² = e^{−(στ)²} sur 25 retards + matrice 2 BS vs forme fermée sur [0, 2π]',
+        Math.max(qerr, mz), 1e-9, m1 + m2, `le dip HOM P(τ) = ½(1−|μ|²) hérite de cette exactitude`);
+    }
+    case 'qo-chsh': {
+      const { a, ap, b, bp } = chshStandardAngles();
+      const { v: g, ms: m1 } = timed(() => chshGridMax(0.5));
+      const { v: hv, ms: m2 } = timed(() => chshHiddenVariables(a, ap, b, bp, 200_000));
+      const sq2 = 2 * Math.SQRT2;
+      return mk('Optique quantique', 'Violation de Bell (CHSH) — mesurée, pas affirmée',
+        'La mécanique quantique atteint S = 2√2 (borne de Tsirelson) ; un modèle local simulé plafonne à 2',
+        `Max exhaustif de S sur 360³ combinaisons d’angles (tables trig exactes) : |S_max − 2√2| ; simulation à variables cachées locales (200k paires, Malus prédéterminé) : S_HV ≤ 2`,
+        Math.max(Math.abs(g.sMax - sq2), hv.S - 2, Math.abs(chshS(a, ap, b, bp) - sq2)), 0.02, m1 + m2,
+        `S_QM = ${chshS(a, ap, b, bp).toFixed(12)} = 2√2 à ${Math.abs(chshS(a, ap, b, bp) - sq2).toExponential(1)} près · S_HV = ${hv.S.toFixed(4)} (bruit MC ≈ 4,5e-3) — séparation ≈ ${(Math.abs(chshS(a, ap, b, bp) - hv.S) / 0.0045).toFixed(0)}σ`);
     }
 
     // ---- FFT ---------------------------------------------------------------

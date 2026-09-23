@@ -94,6 +94,8 @@ Lecture honnête : les trois modes perdent ~+0.02 val loss — à cette échelle
 
 ---
 
+<<<<<<< HEAD
+=======
 ## 2. Intégrations papiers (vérifiées)
 
 ### 2.1 PNN accelerator — Nature Com. 17, 1059 (2026)
@@ -111,6 +113,7 @@ Simulation numérique du cadre du papier (module `src/physics/langevin.ts`, TS p
 
 ---
 
+>>>>>>> origin/master
 ## 3. La page live — vérification dans le navigateur
 
 **https://bahira.github.io/lightemulator/** — panneau d'instrument avec :
@@ -149,6 +152,8 @@ Simulation numérique du cadre du papier (module `src/physics/langevin.ts`, TS p
 
 ---
 
+<<<<<<< HEAD
+=======
 ## 6. Conclusions des intégrations (bilan honnête)
 
 ### Ce que les deux papiers ont prouvé sur notre méthodologie
@@ -172,4 +177,5 @@ Plus une quatrième découverte numérique : dt=0.05 violait la condition de sta
 
 ---
 
+>>>>>>> origin/master
 *Built by [@bahira](https://github.com/bahira) — every claim falsifiable, every number reproducible.*
