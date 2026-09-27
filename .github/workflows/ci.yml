@@ -21,11 +21,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: build C (gcc, scalaire — pas de données TinyStories en CI)
-        run: gcc -O2 -ffast-math -o /tmp/lm_verify lm_c/verify_kernels.c -lm
-      - name: kernels SPEAR — vérification + microbench
+      - name: build C (gcc — runner x86-64 avec AVX2)
+        run: |
+          gcc -O2 -march=native -ffast-math -fopenmp -o /tmp/lm_verify lm_c/verify_kernels.c -lm
+          gcc -O2 -march=native -ffast-math -fopenmp -o /tmp/lm_bench lm_c/lm_bench_exp8.c -lm
+      - name: kernels SPEAR — exactitude (échoue si FAUX)
         run: |
           /tmp/lm_verify | tee /tmp/verify_out.txt
           ! grep -q 'FAUX' /tmp/verify_out.txt
-      # le training e2e reste hors CI (données TinyStories gitignorées) —
-      # la vérification des kernels + microbench est reproductible sans données
+      - name: microbench exp8 — exactitude + timings en summary
+        run: |
+          /tmp/lm_bench | tee /tmp/bench_out.txt
+          # tolérances larges (variance turbo des runners) : L∞ < 1e-3
+          awk '/exp8 AVX2/ { if ($NF+0 > 1e-3 || $NF+0 <= 0) { print "tolérance L∞ dépassée: " $NF; exit 1 } }' /tmp/bench_out.txt
+          {
+            echo "### Microbench exp8 (20M appels)"
+            echo '```'
+            cat /tmp/bench_out.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: training C smoke (échantillon 32 KB commité — loss doit baisser)
+        run: |
+          gcc -O2 -march=native -ffast-math -fopenmp -o /tmp/lm_train lm_c/lm_main.c -lm
+          export GOMP_SPINCOUNT=0
+          /tmp/lm_train --data ci-data/tinystories_ci.txt --steps 60 --gen 0 2>&1 | tee /tmp/train_out.txt
+          # le GEMM auto-test doit passer (max|diff| faible, PAS de MISMATCH)
+          ! grep -q 'MISMATCH\|nan\|inf' /tmp/train_out.txt
+          {
+            echo "### Training C smoke (60 steps, échantillon 32 KB)"
+            echo '```'
+            grep -E 'param|loss finale|val loss|max\|diff\|' /tmp/train_out.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
