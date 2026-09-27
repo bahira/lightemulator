@@ -2,7 +2,7 @@
 
 *5 modules · chaque claim falsifiable · les receipts sont les chiffres du repo*
 
-Le plan de cours derrière [lightemulator](https://github.com/bahira/lightemulator) — la physique et le ML distillés en algèbre pure, vérifiés contre des oracles indépendants. Le module 1 est gratuit en preview ci-dessous.
+**→ [Page d'accès et réservation](https://bahira.github.io/lightemulator/cours/index.html)** (ou `docs/cours/index.html` en local). Le module 1 est gratuit en preview ci-dessous.
 
 ---
 

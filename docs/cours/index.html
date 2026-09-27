@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GPT from scratch in C — le cours où chaque chiffre est vérifié</title>
+<meta name="description" content="5 modules pour comprendre un transformer de bout en bout : forward, backward exacte, kernels, GEMM multi-accumulateurs — et la rigueur comme produit. Module 1 gratuit, jouable en ligne." />
+<style>
+  :root { --bg:#0a0f16; --panel:#0f1620; --line:rgba(148,163,184,.14); --txt:#e2e8f0; --dim:#94a3b8; --dim2:#64748b; --cy:#22d3ee; --vi:#a78bfa; --em:#34d399; --am:#fbbf24; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:radial-gradient(1200px 600px at 50% -10%, #0d1a24 0%, var(--bg) 60%); color:var(--txt); font:15px/1.65 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 20px 80px; }
+  header { padding: 64px 0 40px; text-align:center; }
+  h1 { font-size: clamp(30px,5vw,46px); line-height:1.1; margin:0 0 16px; letter-spacing:-0.02em; }
+  h1 em { font-style:normal; background:linear-gradient(90deg,var(--cy),var(--vi)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .sub { color:var(--dim); font-size:17px; max-width: 640px; margin: 0 auto 28px; }
+  .cta { display:inline-flex; align-items:center; gap:10px; padding: 13px 26px; border-radius: 10px; background:linear-gradient(90deg,#0891b2,#7c3aed); color:#fff; font-weight:650; text-decoration:none; font-size:15px; box-shadow:0 8px 30px -8px rgba(124,58,237,.6); }
+  .cta:hover { filter: brightness(1.1); }
+  .ghost { display:inline-flex; padding:13px 22px; border-radius:10px; border:1px solid var(--line); color:var(--txt); text-decoration:none; font-weight:600; font-size:15px; background:rgba(148,163,184,.05); }
+  .ghost:hover { background:rgba(148,163,184,.1); }
+  .row { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin-top:22px; }
+  section { margin: 52px 0; }
+  h2 { font-size:24px; margin:0 0 8px; letter-spacing:-0.01em; }
+  .lead { color:var(--dim); margin:0 0 24px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+  .stat { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .stat b { display:block; font-size:26px; color:var(--cy); font-variant-numeric:tabular-nums; }
+  .stat span { color:var(--dim2); font-size:12px; }
+  .mod { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:22px; margin-bottom:14px; position:relative; }
+  .mod .n { font-family:ui-monospace,monospace; color:var(--vi); font-size:12px; letter-spacing:.1em; }
+  .mod h3 { margin:6px 0 8px; font-size:19px; }
+  .mod p { margin:0 0 12px; color:var(--dim); font-size:14px; }
+  .free { display:inline-block; background:rgba(52,211,153,.15); color:var(--em); border:1px solid rgba(52,211,153,.3); padding:3px 10px; border-radius:20px; font-size:11px; font-weight:700; }
+  ul { margin:0; padding-left:18px; color:var(--dim2); font-size:13px; }
+  li { margin:5px 0; }
+  li b, li code { color:var(--dim); }
+  code { background:rgba(148,163,184,.1); padding:1px 6px; border-radius:4px; font-size:12.5px; }
+  table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); }
+  th { color:var(--dim2); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.05em; }
+  td b { color:var(--cy); font-variant-numeric:tabular-nums; }
+  .note { background:rgba(251,191,36,.07); border:1px solid rgba(251,191,36,.25); border-radius:12px; padding:16px 18px; color:var(--dim); font-size:13.5px; }
+  .note b { color:var(--am); }
+  footer { border-top:1px solid var(--line); margin-top:64px; padding-top:28px; text-align:center; color:var(--dim2); font-size:13px; }
+  footer a { color:var(--dim); }
+  .price { background:linear-gradient(135deg,rgba(34,211,238,.08),rgba(167,139,250,.08)); border:1px solid rgba(34,211,238,.3); border-radius:18px; padding:34px; text-align:center; }
+  .price .amt { font-size:44px; font-weight:750; color:var(--cy); }
+  .price .per { color:var(--dim2); font-size:14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Un transformer en 500 lignes de C.<br/>Et <em>chaque chiffre vérifié</em>.</h1>
+  <p class="sub">5 modules pour comprendre un GPT de bout en bout — forward, backward exacte, kernels d'activation, GEMM multi-accumulateurs — et la discipline qui fait la différence&nbsp;: <b>l'oracle avant le code</b>.</p>
+  <div class="row">
+    <a class="cta" href="https://bahira.github.io/lightemulator/demo.html" target="_blank">▶ Module 1 gratuit, jouable en ligne</a>
+    <a class="ghost" href="https://github.com/bahira/lightemulator" target="_blank">Voir le repo (MIT)</a>
+  </div>
+</header>
+
+<section>
+  <div class="grid">
+    <div class="stat"><b>44</b><span>tests grounded, tous verts</span></div>
+    <div class="stat"><b>14 000</b><span>tok/s, C natif, i7 de 2016</span></div>
+    <div class="stat"><b>2</b><span>papiers 2026 reproduits &amp; vérifiés</span></div>
+    <div class="stat"><b>3</b><span>bugs réels attrapés avant publication</span></div>
+  </div>
+</section>
+
+<section>
+  <h2>Le programme</h2>
+  <p class="lead">Chaque module est un problème réel, résolu en code, puis <em>confronté à un oracle indépendant</em> — solution analytique, loi de conservation, énumération exhaustive ou différences finies.</p>
+
+  <div class="mod">
+    <div class="n">MODULE 1 <span class="free">GRATUIT</span></div>
+    <h3>GPT en 500 lignes</h3>
+    <p>Un transformer de caractère complet — embeddings, attention causale, MLP, layernorm, Adam — en 500 lignes de C. Rien d'autre. Vous l'entraînez sur votre machine et vous regardez la loss descendre.</p>
+    <ul>
+      <li>val loss <b>3.15</b> en 800 steps (hasard 4.64) · <b>270k</b> params · <b>~14 000</b> tok/s</li>
+      <li>auto-test GEMM 4 chemins : max|diff| <b>1.4e-6</b> · gradcheck <b>0.0044</b></li>
+      <li>→ <a href="https://bahira.github.io/lightemulator/demo.html" style="color:var(--cy)">jouable dans le navigateur</a> (le module C compilé en wasm32, ~150 tok/s)</li>
+    </ul>
+  </div>
+
+  <div class="mod">
+    <div class="n">MODULE 2</div>
+    <h3>La backward exacte</h3>
+    <p>La rétropropagation à la main : dV, softmax-cross-entropy, attention backward, les quatre chemins GEMM. Le gradient analytique confronté aux différences finies centrées.</p>
+    <ul><li>gradcheck à 0.4 % du pire paramètre · parité noyaux 6/6</li></ul>
+  </div>
+
+  <div class="mod">
+    <div class="n">MODULE 3</div>
+    <h3>Les kernels : exp, rsqrt, tanh, gelu</h3>
+    <p>Écrire <code>exp(x) = 2ᵏ·(1+r·P(r))</code> à la main. Les polynômes minimax, pourquoi libm est lent, le dispatch runtime AVX2 / scalaire. Le kernel embarqué tourne même sur un Cortex-M0.</p>
+    <ul><li>exp <b>×3.4</b> · tanh <b>×5.6</b> · gelu <b>×5.4</b> vs libm (20M appels) · L∞ <b>1.48e-5</b></li></ul>
+  </div>
+
+  <div class="mod">
+    <div class="n">MODULE 4</div>
+    <h3>Le GEMM multi-accumulateurs</h3>
+    <p>La latence FMA (~4 cycles) masquée par 4 chaînes indépendantes, les tuiles de 8 colonnes, le packing transposé zéro-copie. Et la question qui suit&nbsp;: quand le GEMM n'est plus le frein, par quoi l'est-il&nbsp;?</p>
+    <ul><li>×<b>1.78-2.19</b> vs scalaire naïf (5 formes réelles) · A/B NLv 4→6 : val −0.028 pour ×0.67 tok/s</li></ul>
+  </div>
+
+  <div class="mod">
+    <div class="n">MODULE 5</div>
+    <h3>La rigueur comme produit</h3>
+    <p>La boucle grounded en production : oracle d'abord, code ensuite. Et ce qu'elle attrape vraiment — pas en théorie. Nous avons reproduit deux papiers 2026 et la vérification a trouvé <b>trois bugs réels</b> avant publication, dont la preuve expérimentale d'un signe inversé (l'objectif explose 47.85 → 81.71 avec le mauvais signe).</p>
+    <ul>
+      <li>PNN (<i>Nature Com. 17, 1059</i>) : superposition N+C vérifiée à <b>2.12e-16</b> — l'epsilon machine</li>
+      <li>Langevin (<i>arXiv:2506.15121</i>, LBNL) : gradient d'Onsager-Machlup exact à <b>1.13e-6</b></li>
+      <li>Et les limites qu'onassume : la génération Langevin ne sépare pas du hasard à petite échelle — documenté, pas caché</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <h2>Ce que vous repartez avec</h2>
+  <table>
+    <tr><th>Ce que c'est</th><th>Pourquoi ça compte</th></tr>
+    <tr><td>Un modèle <b>compris de bout en bout</b></td><td>Pas « j'ai lu le paper » — vous pouvez réécrire chaque ligne.</td></tr>
+    <tr><td>Des <b>noyaux C réutilisables</b></td><td>Zéro allocation, zéro transcendante, embarquables MCU / FPGA.</td></tr>
+    <tr><td>Une <b>discipline de vérification</b></td><td>Applicable à votre travail du lendemain, quel qu'il soit.</td></tr>
+    <tr><td>Un <b>portfolio vérifiable</b></td><td>44 tests reproductibles. Vos affirmations ne dépendent pas de votre parole.</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>À qui s'adresse ce cours</h2>
+  <ul>
+    <li>Développeur backend/systèmes qui veut <b>comprendre</b> un transformer au lieu d'appeler une API.</li>
+    <li>Ingénieur qui optimise de l'inférence et veut savoir <b>où part réellement le temps</b>.</li>
+    <li>Étudiant en systèmes/IA qui veut des <b>receipts</b>, pas des slides.</li>
+  </ul>
+  <p class="note" style="margin-top:16px"><b>Ce n'est pas pour vous si</b> vous cherchez un framework d'entraînement prêt à l'emploi, ou un tour d'horizon des architectures. C'est un atelier de construction et de mesure.</p>
+</section>
+
+<section>
+  <h2>L'accès</h2>
+  <div class="price">
+    <div class="amt">149 €</div>
+    <div class="per">accès complet · 5 modules · code source + données · mises à jour incluses</div>
+    <div class="row" style="margin-top:22px">
+      <a class="cta" href="mailto:contact@bahira.dev?subject=Cours%20GPT%20from%20scratch%20in%20C">Réserver une place</a>
+      <a class="ghost" href="https://bahira.github.io/lightemulator/demo.html" target="_blank">Essayer le module 1 d'abord</a>
+    </div>
+    <p style="color:var(--dim2);font-size:13px;margin-top:18px">Session de groupe trimestrielle · 12 places · le module 1 reste gratuit pour toujours.</p>
+  </div>
+</section>
+
+<footer>
+  <p>Un projet de <a href="https://github.com/bahira">@bahira</a> — <a href="https://github.com/bahira/lightemulator">lightemulator</a>, MIT.<br/>
+  Démo live&nbsp;: <a href="https://bahira.github.io/lightemulator/demo.html">bahira.github.io/lightemulator</a> — la suite de 44 tests s'exécute dans votre navigateur.</p>
+</footer>
+</div>
+</body>
+</html>
