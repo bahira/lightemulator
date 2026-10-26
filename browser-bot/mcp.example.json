@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "pomerado": {
+      "command": "npx",
+      "args": ["-y", "-p", "pomerado", "pomerado-mcp", "mint", "--root", "/chemin/absolu/vers/lightemulator/browser-bot/integrations"],
+      "env": {
+        "OPENAI_API_KEY": "votre_cle_openai"
+      }
+    }
+  }
+}

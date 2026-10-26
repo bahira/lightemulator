@@ -1,0 +1,31 @@
+{
+  "description": "Exemples de requêtes de mint Pomerado. À passer au bot via `node bot.mjs mint ...`.",
+  "examples": [
+    {
+      "name": "lecteur-exemple",
+      "url": "https://example.com",
+      "task": "Lis le titre principal (balise <h1>) de la page et renvoie-le.",
+      "authority": "read",
+      "note": "Exemple directement inspiré de la documentation Pomerado. Lecture seule."
+    },
+    {
+      "name": "prix-produit",
+      "url": "https://example.com/boutique",
+      "task": "Cherche le produit X, retourne son prix actuel et sa disponibilité.",
+      "authority": "read",
+      "note": "Lecture de données sur un site e-commerce sans API publique."
+    },
+    {
+      "name": "reservation-salle",
+      "url": "https://example.com/reservations",
+      "task": "Réserve une salle de réunion pour demain à 14h pendant 1 heure, au nom de l'utilisateur connecté.",
+      "authority": "write",
+      "note": "Écriture (réservation). Pomerado demande confirmation avant d'utiliser l'autorité write et ne répète pas l'action déjà effectuée pendant le mint."
+    }
+  ],
+  "usage": [
+    "node bot.mjs mint --name lecteur-exemple --url https://example.com --task \"Lis le titre principal (h1) de la page.\" --read",
+    "node bot.mjs job <jobIdRetourne>",
+    "node bot.mjs run lecteur-exemple '{}'"
+  ]
+}

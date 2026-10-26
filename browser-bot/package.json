@@ -1,0 +1,30 @@
+{
+  "name": "lightemulator-browser-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bot d'automatisation navigateur (browser use) basé sur Pomerado. Transforme des sites web en intégrations MCP déterministes, même sans API et derrière login/2FA.",
+  "author": "bahira",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bahira/lightemulator.git",
+    "directory": "browser-bot"
+  },
+  "engines": {
+    "node": ">=24.21.0 <25"
+  },
+  "bin": {
+    "browser-bot": "bot.mjs"
+  },
+  "scripts": {
+    "doctor": "node bot.mjs doctor",
+    "mint": "node bot.mjs mint",
+    "list": "node bot.mjs list",
+    "install-chromium": "npx -y -p pomerado playwright install chromium --with-deps"
+  },
+  "keywords": ["browser", "automation", "pomerado", "mcp", "agent", "bot"],
+  "bugs": {
+    "url": "https://github.com/bahira/lightemulator/issues"
+  },
+  "homepage": "https://github.com/bahira/lightemulator#readme"
+}
