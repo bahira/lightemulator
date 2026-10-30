@@ -93,10 +93,25 @@ Object.defineProperty(window.HTMLElement.prototype, 'clientWidth', { get: () => 
 Object.defineProperty(window.HTMLElement.prototype, 'clientHeight', { get: () => 400, configurable: true });
 Object.defineProperty(window, 'devicePixelRatio', { value: 1, configurable: true });
 
+// rAF bridé. Un `requestAnimationFrame` en setTimeout(0) qui se réarme lui-même
+// tourne à ~25 000 images/s sous jsdom : chaque image est un render React, et
+// React 19 (build dev) émet un `performance.measure` par render → le tampon
+// User Timing explose (1 000 001 entrées) et Node meurt en OOM. On simule donc
+// un 60 Hz virtuel avec un budget de frames par section : assez pour dessiner
+// et animer, jamais assez pour boucler.
 let rafSeq = 0;
-(window as any).requestAnimationFrame = (cb: any) => setTimeout(() => cb(performance.now()), 0) as unknown as number;
+let rafBudget = 12;
+let rafFrames = 0;
+const rafReset = (n = 12) => { rafBudget = n; };
+(window as any).requestAnimationFrame = (cb: any) => {
+  const id = ++rafSeq;
+  if (rafBudget <= 0) return id; // budget épuisé : on ne réarme pas
+  rafBudget--;
+  rafFrames++;
+  setTimeout(() => cb(performance.now()), 2);
+  return id;
+};
 (window as any).cancelAnimationFrame = (id: any) => clearTimeout(id);
-void rafSeq;
 
 const clipboard: string[] = [];
 Object.defineProperty(window.navigator, 'clipboard', {
@@ -163,8 +178,11 @@ const report = (ok: boolean, label: string, detail = '') => {
 };
 
 // ------------------------------------------------- 1. chaque lab, dessiné
-for (const [name, load] of labs) {
+const only = (process.env.ONLY ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+const selected = only.length ? labs.filter(([n]) => only.includes(n)) : labs;
+for (const [name, load] of selected) {
   errors.length = 0;
+  rafReset(12);
   const mod = await load();
   await act(async () => {
     root.render(createElement(mod.default));
@@ -179,6 +197,7 @@ for (const [name, load] of labs) {
 
 // ------------------------------------------------------ 2-4. le shell complet
 errors.length = 0;
+rafReset(8);
 await act(async () => {
   root.render(createElement(App));
 });
@@ -190,6 +209,7 @@ report(tabButtons.length === 16, 'shell : 16 onglets rendus', `${tabButtons.leng
 
 let tabsOk = 0;
 for (const btn of tabButtons) {
+  rafReset(8);
   await act(async () => { btn.click(); });
   await act(async () => { await sleep(18); });
   if (doc.querySelector('canvas') || doc.body.innerHTML.length > 2000) tabsOk++;
@@ -249,9 +269,11 @@ if (shareBtn) {
 
 await act(async () => { root.render(createElement('div')); });
 await sleep(0);
+report(rafFrames > 0 && rafFrames < 400, 'animations bridées (pas de boucle rAF)', `${rafFrames} frames, budget/section`);
 
 // -------------------------------------------- 5. deep-link : un lien rouvre le lab
 {
+  rafReset(8);
   window.history.replaceState(null, '', '#lab=holo&hit=80');
   const host = window.document.createElement('div');
   window.document.body.appendChild(host);

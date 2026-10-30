@@ -48,6 +48,24 @@ jobs:
             cat /tmp/bench_out.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: GEMM micro-kernel — parité + A/B 4 lignes M
+        run: |
+          gcc -O2 -march=native -ffast-math -o /tmp/bench_mm bench/bench_mm_isa.c -lm
+          /tmp/bench_mm | tee /tmp/bench_mm.txt
+          if grep -qE 'max\|diff\| [1-9]' /tmp/bench_mm.txt; then
+            echo "parité GEMM cassée : un chemin vectoriel diverge du scalaire"; exit 1
+          fi
+          # profil « runner sans AVX-512 » : les variantes 512 doivent disparaître des totaux
+          LM_NO512=1 /tmp/bench_mm | tail -6 > /tmp/bench_mm_no512.txt
+          {
+            echo "### GEMM mm_nt_t — A/B 4 lignes M"
+            echo '```'
+            cat /tmp/bench_mm.txt
+            echo '```'
+            echo '```'
+            cat /tmp/bench_mm_no512.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: claims — re-mesure sur le runner (CPU/gcc réels)
         run: |
           node tools/claims.mjs | tee /tmp/claims.md

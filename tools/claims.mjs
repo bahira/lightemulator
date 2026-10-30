@@ -76,6 +76,25 @@ try {
   row('kernels C', 'non mesuré (gcc indisponible)', 'gcc nécessaire');
 }
 
+// ---------------------------------------- 2b. GEMM micro-kernel 4 lignes M
+try {
+  const dir = mkdtempSync(join(tmpdir(), 'claims-mm-'));
+  execFileSync('gcc', ['-O2', '-march=native', '-ffast-math', '-o', join(dir, 'mm'), join(root, 'bench/bench_mm_isa.c'), '-lm'], { stdio: 'ignore' });
+  const out = execFileSync(join(dir, 'mm'), { encoding: 'utf8' });
+  const num = (re) => { const m = out.match(re); return m ? Number(m[1]) : null; };
+  const scal = num(/scalaire\s+([\d.]+) ms/);
+  const base = num(/AVX2 4x8\s+([\d.]+) ms/);
+  const mb4 = num(/AVX2 4Mx16\s+([\d.]+) ms/);
+  const w512 = num(/AVX512 4Mx64\s+([\d.]+) ms/);
+  const naive = num(/AVX512 4x16\s+([\d.]+) ms/);
+  if (base && mb4) row('GEMM 4 lignes M (AVX2 4M×16)', `×${(base / mb4).toFixed(2)} vs noyau 4×8`, 'bench/bench_mm_isa.c, 5 formes réelles');
+  if (base && w512) row('GEMM 4 lignes M (AVX-512 4M×64)', `×${(base / w512).toFixed(2)} vs 4×8`, 'max|diff| = 0 vs scalaire');
+  if (scal && w512) row('GEMM meilleur vs scalaire', `×${(scal / w512).toFixed(1)}`, '5 formes, 9 rounds × 200 reps');
+  if (base && naive) row('AVX-512 sans blocage (4×16)', `×${(base / naive).toFixed(2)} vs 4×8`, 'contre-exemple : la largeur SIMD seule ne paie pas');
+} catch {
+  row('GEMM micro-kernel', 'non mesuré (gcc indisponible)', 'bench/bench_mm_isa.c');
+}
+
 // ------------------------------------------- 3. inférence wasm (tok/s + V)
 try {
   const wasm = readFileSync(join(root, 'public/lm_infer.wasm'));
@@ -144,10 +163,12 @@ if (full && kernelsOk) {
     // cwd = dossier temporaire : le trainer écrit `lm_c/checkpoint.bin` en relatif,
     // il ne doit surtout pas écraser le checkpoint versionné de public/.
     const out = execFileSync(bin, ['--data', join(root, 'ci-data/tinystories_ci.txt'), '--steps', '60', '--gradcheck', '--nogen'], { encoding: 'utf8', cwd: dir, env: { ...process.env, GOMP_SPINCOUNT: '0' } });
+    const tps = out.match(/([0-9]+) tok\/s/g);
     const gc = out.match(/erreur moyenne norm.*?=\s*([0-9.]+)/);
     const val = out.match(/val loss FP32 : ([0-9.]+)/);
     if (gc) row('gradcheck (FD vs backward analytique)', `erreur moyenne ${gc[1]}`, '40 paramètres');
     if (val) row('training smoke 60 steps (32 kB)', `val loss ${val[1]}`, 'hasard ≈ 4,08');
+    if (tps && tps.length) row('débit entraînement (60 steps)', tps[tps.length - 1], 'GEMM 4 lignes M + AVX-512');
   } catch {
     row('training smoke', 'non mesuré', 'échec de compilation/exécution');
   }
