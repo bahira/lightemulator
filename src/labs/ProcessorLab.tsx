@@ -7,15 +7,15 @@ import { HW_PRESETS, meshPerformance } from '../physics/latency';
 import { measureCpuMatvec } from '../physics/validate';
 import {
   Panel, Stat, Slider, Segmented, Btn, Tag, Formula,
-  useCanvas, LUT, paintField, drawImageBuffer, axisLabel,
+  useCanvas, LUT, paintField, drawImageBuffer, axisLabel, useHashNumber,
 } from '../ui/kit';
 
 type UKind = 'haar' | 'dft' | 'hadamard' | 'custom';
 
 export default function ProcessorLab() {
-  const [n, setN] = useState(10);
+  const [n, setN] = useHashNumber('pn', 10);
   const [kind, setKind] = useState<UKind>('haar');
-  const [seed, setSeed] = useState(1234);
+  const [seed, setSeed] = useHashNumber('ps', 1234);
   const [inPort, setInPort] = useState(0);
   const [spread, setSpread] = useState(false);
   const [hw, setHw] = useState<keyof typeof HW_PRESETS>('mems');
@@ -343,7 +343,7 @@ export default function ProcessorLab() {
           )}
           {kind === 'haar' && (
             <div className="mt-3">
-              <Btn onClick={() => setSeed((s) => s + 1)} tone="primary" className="w-full">↻ Nouvelle unitaire aléatoire</Btn>
+              <Btn onClick={() => setSeed(seed + 1)} tone="primary" className="w-full">↻ Nouvelle unitaire aléatoire</Btn>
             </div>
           )}
           <div className="mt-3 grid grid-cols-2 gap-2">

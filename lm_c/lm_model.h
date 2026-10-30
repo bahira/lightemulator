@@ -156,6 +156,7 @@ static void scratchAlloc(int B) {
 #include <omp.h>
 #endif
 static int cpuAvx2 = -1;
+static int cpuAvx512 = -1; /* -1 = non testé ; 1 = avx512f disponible (dispatch runtime) */
 static int g_gemmOld = 0; /* --gemm-old : force la chaÃ®ne unique (A/B e2e) */
 double g_tGemm = 0, g_tAtt = 0, g_tLn = 0;
 static int g_prof = 0;
@@ -223,10 +224,167 @@ static void mm_nt_t_avx2(float *Y, const float *X, const float *Wtr, const float
     }
 }
 #endif /* __x86_64__ — mm_nt_t_avx2 (wasm/ARM : chemin scalaire) */
+
+/* --------------------------------------------------- GEMM 4 lignes M v2 --
+ * Le noyau 4x8 ci-dessus relit W une fois PAR ligne M : sur les formes reelles
+ * (K*N*4 = 62-83 kB, L2) il est limite par le trafic memoire, pas par les FMA.
+ * Traiter 4 lignes M par tuile de colonnes divise ce trafic par 4 et quadruple
+ * l'intensite arithmetique. Mesure (bench_mm_isa.c, 5 rounds x 100 reps) :
+ *   AVX2   4M x 16 : x1.8 vs 4x8       AVX-512 4M x 64 : x2.2 vs 4x8
+ * Resultats bit-identiques au chemin scalaire (meme ordre d'accumulation en k).
+ */
+__attribute__((target("avx2,fma")))
+static void mm_nt_t_avx2_mb4(float *Y, const float *X, const float *Wtr, const float *b,
+                             int M, int K, int N) {
+    const int N16 = N & ~15, N8 = N & ~7;
+    const int mblk = M >> 2; /* groupes de 4 lignes M */
+    _Pragma("omp parallel for schedule(static)")
+    for (int mb = 0; mb < mblk; mb++) {
+        const int m = mb << 2;
+        const float *x0 = X + (size_t)(m + 0) * K, *x1 = X + (size_t)(m + 1) * K;
+        const float *x2 = X + (size_t)(m + 2) * K, *x3 = X + (size_t)(m + 3) * K;
+        float *y0 = Y + (size_t)(m + 0) * N, *y1 = Y + (size_t)(m + 1) * N;
+        float *y2 = Y + (size_t)(m + 2) * N, *y3 = Y + (size_t)(m + 3) * N;
+        int nb = 0;
+        for (; nb + 16 <= N16; nb += 16) {
+            __m256 a00 = b ? _mm256_loadu_ps(b + nb) : _mm256_setzero_ps();
+            __m256 a01 = b ? _mm256_loadu_ps(b + nb + 8) : _mm256_setzero_ps();
+            __m256 a10 = a00, a11 = a01, a20 = a00, a21 = a01, a30 = a00, a31 = a01;
+            for (int k = 0; k < K; k++) {
+                const float *w = Wtr + (size_t)k * N + nb;
+                const __m256 w0 = _mm256_loadu_ps(w), w1 = _mm256_loadu_ps(w + 8);
+                const __m256 v0 = _mm256_set1_ps(x0[k]), v1 = _mm256_set1_ps(x1[k]);
+                const __m256 v2 = _mm256_set1_ps(x2[k]), v3 = _mm256_set1_ps(x3[k]);
+                a00 = _mm256_fmadd_ps(v0, w0, a00); a01 = _mm256_fmadd_ps(v0, w1, a01);
+                a10 = _mm256_fmadd_ps(v1, w0, a10); a11 = _mm256_fmadd_ps(v1, w1, a11);
+                a20 = _mm256_fmadd_ps(v2, w0, a20); a21 = _mm256_fmadd_ps(v2, w1, a21);
+                a30 = _mm256_fmadd_ps(v3, w0, a30); a31 = _mm256_fmadd_ps(v3, w1, a31);
+            }
+            _mm256_storeu_ps(y0 + nb, a00); _mm256_storeu_ps(y0 + nb + 8, a01);
+            _mm256_storeu_ps(y1 + nb, a10); _mm256_storeu_ps(y1 + nb + 8, a11);
+            _mm256_storeu_ps(y2 + nb, a20); _mm256_storeu_ps(y2 + nb + 8, a21);
+            _mm256_storeu_ps(y3 + nb, a30); _mm256_storeu_ps(y3 + nb + 8, a31);
+        }
+        for (; nb + 8 <= N8; nb += 8) {
+            __m256 a0 = b ? _mm256_loadu_ps(b + nb) : _mm256_setzero_ps();
+            __m256 a1 = a0, a2 = a0, a3 = a0;
+            for (int k = 0; k < K; k++) {
+                const __m256 w = _mm256_loadu_ps(Wtr + (size_t)k * N + nb);
+                a0 = _mm256_fmadd_ps(_mm256_set1_ps(x0[k]), w, a0);
+                a1 = _mm256_fmadd_ps(_mm256_set1_ps(x1[k]), w, a1);
+                a2 = _mm256_fmadd_ps(_mm256_set1_ps(x2[k]), w, a2);
+                a3 = _mm256_fmadd_ps(_mm256_set1_ps(x3[k]), w, a3);
+            }
+            _mm256_storeu_ps(y0 + nb, a0); _mm256_storeu_ps(y1 + nb, a1);
+            _mm256_storeu_ps(y2 + nb, a2); _mm256_storeu_ps(y3 + nb, a3);
+        }
+        for (int n = N8; n < N; n++) {
+            float s0 = b ? b[n] : 0.0f, s1 = s0, s2 = s0, s3 = s0;
+            for (int k = 0; k < K; k++) {
+                const float w = Wtr[(size_t)k * N + n];
+                s0 += x0[k] * w; s1 += x1[k] * w; s2 += x2[k] * w; s3 += x3[k] * w;
+            }
+            y0[n] = s0; y1[n] = s1; y2[n] = s2; y3[n] = s3;
+        }
+    }
+    const int mtail = mblk << 2;
+    if (mtail < M) mm_nt_t_avx2(Y + (size_t)mtail * N, X + (size_t)mtail * K, Wtr, b, M - mtail, K, N);
+}
+
+__attribute__((target("avx512f,avx2,fma")))
+static void mm_nt_t_avx512_mb4(float *Y, const float *X, const float *Wtr, const float *b,
+                               int M, int K, int N) {
+    const int N64 = N & ~63, N16 = N & ~15, N8 = N & ~7;
+    const int mblk = M >> 2; /* groupes de 4 lignes M */
+    _Pragma("omp parallel for schedule(static)")
+    for (int mb = 0; mb < mblk; mb++) {
+        const int m = mb << 2;
+        const float *x0 = X + (size_t)(m + 0) * K, *x1 = X + (size_t)(m + 1) * K;
+        const float *x2 = X + (size_t)(m + 2) * K, *x3 = X + (size_t)(m + 3) * K;
+        float *y0 = Y + (size_t)(m + 0) * N, *y1 = Y + (size_t)(m + 1) * N;
+        float *y2 = Y + (size_t)(m + 2) * N, *y3 = Y + (size_t)(m + 3) * N;
+        int nb = 0;
+        for (; nb + 64 <= N64; nb += 64) {
+            __m512 a[4][4];
+            for (int j = 0; j < 4; j++) {
+                const __m512 bj = b ? _mm512_loadu_ps(b + nb + 16 * j) : _mm512_setzero_ps();
+                a[0][j] = bj; a[1][j] = bj; a[2][j] = bj; a[3][j] = bj;
+            }
+            for (int k = 0; k < K; k++) {
+                const float *w = Wtr + (size_t)k * N + nb;
+                const __m512 w0 = _mm512_loadu_ps(w), w1 = _mm512_loadu_ps(w + 16);
+                const __m512 w2 = _mm512_loadu_ps(w + 32), w3 = _mm512_loadu_ps(w + 48);
+                const __m512 v0 = _mm512_set1_ps(x0[k]), v1 = _mm512_set1_ps(x1[k]);
+                const __m512 v2 = _mm512_set1_ps(x2[k]), v3 = _mm512_set1_ps(x3[k]);
+                a[0][0] = _mm512_fmadd_ps(v0, w0, a[0][0]); a[0][1] = _mm512_fmadd_ps(v0, w1, a[0][1]);
+                a[0][2] = _mm512_fmadd_ps(v0, w2, a[0][2]); a[0][3] = _mm512_fmadd_ps(v0, w3, a[0][3]);
+                a[1][0] = _mm512_fmadd_ps(v1, w0, a[1][0]); a[1][1] = _mm512_fmadd_ps(v1, w1, a[1][1]);
+                a[1][2] = _mm512_fmadd_ps(v1, w2, a[1][2]); a[1][3] = _mm512_fmadd_ps(v1, w3, a[1][3]);
+                a[2][0] = _mm512_fmadd_ps(v2, w0, a[2][0]); a[2][1] = _mm512_fmadd_ps(v2, w1, a[2][1]);
+                a[2][2] = _mm512_fmadd_ps(v2, w2, a[2][2]); a[2][3] = _mm512_fmadd_ps(v2, w3, a[2][3]);
+                a[3][0] = _mm512_fmadd_ps(v3, w0, a[3][0]); a[3][1] = _mm512_fmadd_ps(v3, w1, a[3][1]);
+                a[3][2] = _mm512_fmadd_ps(v3, w2, a[3][2]); a[3][3] = _mm512_fmadd_ps(v3, w3, a[3][3]);
+            }
+            _mm512_storeu_ps(y0 + nb, a[0][0]); _mm512_storeu_ps(y0 + nb + 16, a[0][1]);
+            _mm512_storeu_ps(y0 + nb + 32, a[0][2]); _mm512_storeu_ps(y0 + nb + 48, a[0][3]);
+            _mm512_storeu_ps(y1 + nb, a[1][0]); _mm512_storeu_ps(y1 + nb + 16, a[1][1]);
+            _mm512_storeu_ps(y1 + nb + 32, a[1][2]); _mm512_storeu_ps(y1 + nb + 48, a[1][3]);
+            _mm512_storeu_ps(y2 + nb, a[2][0]); _mm512_storeu_ps(y2 + nb + 16, a[2][1]);
+            _mm512_storeu_ps(y2 + nb + 32, a[2][2]); _mm512_storeu_ps(y2 + nb + 48, a[2][3]);
+            _mm512_storeu_ps(y3 + nb, a[3][0]); _mm512_storeu_ps(y3 + nb + 16, a[3][1]);
+            _mm512_storeu_ps(y3 + nb + 32, a[3][2]); _mm512_storeu_ps(y3 + nb + 48, a[3][3]);
+        }
+        for (; nb + 16 <= N16; nb += 16) {
+            __m512 a0 = b ? _mm512_loadu_ps(b + nb) : _mm512_setzero_ps();
+            __m512 a1 = a0, a2 = a0, a3 = a0;
+            for (int k = 0; k < K; k++) {
+                const __m512 w = _mm512_loadu_ps(Wtr + (size_t)k * N + nb);
+                a0 = _mm512_fmadd_ps(_mm512_set1_ps(x0[k]), w, a0);
+                a1 = _mm512_fmadd_ps(_mm512_set1_ps(x1[k]), w, a1);
+                a2 = _mm512_fmadd_ps(_mm512_set1_ps(x2[k]), w, a2);
+                a3 = _mm512_fmadd_ps(_mm512_set1_ps(x3[k]), w, a3);
+            }
+            _mm512_storeu_ps(y0 + nb, a0); _mm512_storeu_ps(y1 + nb, a1);
+            _mm512_storeu_ps(y2 + nb, a2); _mm512_storeu_ps(y3 + nb, a3);
+        }
+        for (; nb + 8 <= N8; nb += 8) {
+            __m256 a0 = b ? _mm256_loadu_ps(b + nb) : _mm256_setzero_ps();
+            __m256 a1 = a0, a2 = a0, a3 = a0;
+            for (int k = 0; k < K; k++) {
+                const __m256 w = _mm256_loadu_ps(Wtr + (size_t)k * N + nb);
+                a0 = _mm256_fmadd_ps(_mm256_set1_ps(x0[k]), w, a0);
+                a1 = _mm256_fmadd_ps(_mm256_set1_ps(x1[k]), w, a1);
+                a2 = _mm256_fmadd_ps(_mm256_set1_ps(x2[k]), w, a2);
+                a3 = _mm256_fmadd_ps(_mm256_set1_ps(x3[k]), w, a3);
+            }
+            _mm256_storeu_ps(y0 + nb, a0); _mm256_storeu_ps(y1 + nb, a1);
+            _mm256_storeu_ps(y2 + nb, a2); _mm256_storeu_ps(y3 + nb, a3);
+        }
+        for (int n = N8; n < N; n++) {
+            float s0 = b ? b[n] : 0.0f, s1 = s0, s2 = s0, s3 = s0;
+            for (int k = 0; k < K; k++) {
+                const float w = Wtr[(size_t)k * N + n];
+                s0 += x0[k] * w; s1 += x1[k] * w; s2 += x2[k] * w; s3 += x3[k] * w;
+            }
+            y0[n] = s0; y1[n] = s1; y2[n] = s2; y3[n] = s3;
+        }
+    }
+    const int mtail = mblk << 2;
+    if (mtail < M) mm_nt_t_avx2(Y + (size_t)mtail * N, X + (size_t)mtail * K, Wtr, b, M - mtail, K, N);
+}
 static void mm_nt_t(float *Y, const float *X, const float *Wrow, const float *Wtr,
                     const float *b, int M, int K, int N) {
 #if defined(__x86_64__) || defined(_M_X64)
     if (cpuAvx2 < 0) cpuAvx2 = __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma");
+    if (cpuAvx512 < 0) cpuAvx512 = __builtin_cpu_supports("avx512f");
+    if (cpuAvx2 && !g_gemmOld) {
+        /* 4 lignes M par tuile : le trafic sur W est divisé par 4 (cf. bench_mm_isa.c) */
+        const double tp0 = g_prof ? profNow() : 0;
+        if (cpuAvx512) mm_nt_t_avx512_mb4(Y, X, Wtr, b, M, K, N);
+        else           mm_nt_t_avx2_mb4(Y, X, Wtr, b, M, K, N);
+        if (g_prof) g_tGemm += profNow() - tp0;
+        return;
+    }
     if (cpuAvx2) { const double tp0 = g_prof ? profNow() : 0; mm_nt_t_avx2(Y, X, Wtr, b, M, K, N); if (g_prof) g_tGemm += profNow() - tp0; return; }
 #endif
     {
@@ -376,6 +534,147 @@ static void mm_tndw_avx2(float *dW, float *db, const float *dY, const float *X,
         if (db) db[n] += accb;
     }
 }
+
+/* ---------------------------------------- backward bloqué 4 lignes / 4 cols --
+ * Même constat que pour le forward : les noyaux 1-ligne relisent W (dxd) ou X
+ * (tndw) une fois par ligne/colonne de sortie. Grouper 4 lignes M (resp. 4
+ * colonnes N) divise ce trafic par 4. Accumulateurs en registres, tuiles de
+ * 16 colonnes (8 ymm) pour rester sous la pression registres AVX2.
+ * Sémantique inchangée : dX et dW sont des ACCUMULATEURS (on repart de leur
+ * valeur courante), et les résultats sont bit-identiques au chemin scalaire.
+ */
+__attribute__((target("avx2,fma")))
+static void mm_dxd_avx2_mb4(float *dX, const float *dY, const float *W, int M, int K, int N) {
+    const int K16 = K & ~15, K8 = K & ~7;
+    const int mblk = M >> 2;
+    _Pragma("omp parallel for schedule(static)")
+    for (int mb = 0; mb < mblk; mb++) {
+        const int m = mb << 2;
+        const float *d0 = dY + (size_t)(m + 0) * N, *d1 = dY + (size_t)(m + 1) * N;
+        const float *d2 = dY + (size_t)(m + 2) * N, *d3 = dY + (size_t)(m + 3) * N;
+        float *x0 = dX + (size_t)(m + 0) * K, *x1 = dX + (size_t)(m + 1) * K;
+        float *x2 = dX + (size_t)(m + 2) * K, *x3 = dX + (size_t)(m + 3) * K;
+        int kb = 0;
+        for (; kb + 16 <= K16; kb += 16) {
+            __m256 a00 = _mm256_loadu_ps(x0 + kb),     a01 = _mm256_loadu_ps(x0 + kb + 8);
+            __m256 a10 = _mm256_loadu_ps(x1 + kb),     a11 = _mm256_loadu_ps(x1 + kb + 8);
+            __m256 a20 = _mm256_loadu_ps(x2 + kb),     a21 = _mm256_loadu_ps(x2 + kb + 8);
+            __m256 a30 = _mm256_loadu_ps(x3 + kb),     a31 = _mm256_loadu_ps(x3 + kb + 8);
+            for (int n = 0; n < N; n++) {
+                const float *w = W + (size_t)n * K + kb;
+                const __m256 w0 = _mm256_loadu_ps(w), w1 = _mm256_loadu_ps(w + 8);
+                const __m256 v0 = _mm256_set1_ps(d0[n]), v1 = _mm256_set1_ps(d1[n]);
+                const __m256 v2 = _mm256_set1_ps(d2[n]), v3 = _mm256_set1_ps(d3[n]);
+                a00 = _mm256_fmadd_ps(v0, w0, a00); a01 = _mm256_fmadd_ps(v0, w1, a01);
+                a10 = _mm256_fmadd_ps(v1, w0, a10); a11 = _mm256_fmadd_ps(v1, w1, a11);
+                a20 = _mm256_fmadd_ps(v2, w0, a20); a21 = _mm256_fmadd_ps(v2, w1, a21);
+                a30 = _mm256_fmadd_ps(v3, w0, a30); a31 = _mm256_fmadd_ps(v3, w1, a31);
+            }
+            _mm256_storeu_ps(x0 + kb, a00); _mm256_storeu_ps(x0 + kb + 8, a01);
+            _mm256_storeu_ps(x1 + kb, a10); _mm256_storeu_ps(x1 + kb + 8, a11);
+            _mm256_storeu_ps(x2 + kb, a20); _mm256_storeu_ps(x2 + kb + 8, a21);
+            _mm256_storeu_ps(x3 + kb, a30); _mm256_storeu_ps(x3 + kb + 8, a31);
+        }
+        for (; kb + 8 <= K8; kb += 8) {
+            __m256 a0 = _mm256_loadu_ps(x0 + kb), a1 = _mm256_loadu_ps(x1 + kb);
+            __m256 a2 = _mm256_loadu_ps(x2 + kb), a3 = _mm256_loadu_ps(x3 + kb);
+            for (int n = 0; n < N; n++) {
+                const __m256 w = _mm256_loadu_ps(W + (size_t)n * K + kb);
+                a0 = _mm256_fmadd_ps(_mm256_set1_ps(d0[n]), w, a0);
+                a1 = _mm256_fmadd_ps(_mm256_set1_ps(d1[n]), w, a1);
+                a2 = _mm256_fmadd_ps(_mm256_set1_ps(d2[n]), w, a2);
+                a3 = _mm256_fmadd_ps(_mm256_set1_ps(d3[n]), w, a3);
+            }
+            _mm256_storeu_ps(x0 + kb, a0); _mm256_storeu_ps(x1 + kb, a1);
+            _mm256_storeu_ps(x2 + kb, a2); _mm256_storeu_ps(x3 + kb, a3);
+        }
+        for (int k = K8; k < K; k++) {
+            float s0 = x0[k], s1 = x1[k], s2 = x2[k], s3 = x3[k];
+            for (int n = 0; n < N; n++) {
+                const float w = W[(size_t)n * K + k];
+                s0 += d0[n] * w; s1 += d1[n] * w; s2 += d2[n] * w; s3 += d3[n] * w;
+            }
+            x0[k] = s0; x1[k] = s1; x2[k] = s2; x3[k] = s3;
+        }
+    }
+    const int mt = mblk << 2;
+    if (mt < M) mm_dxd_avx2(dX + (size_t)mt * K, dY + (size_t)mt * N, W, M - mt, K, N);
+}
+
+__attribute__((target("avx2,fma")))
+static void mm_tndw_avx2_mb4(float *dW, float *db, const float *dY, const float *X,
+                             int M, int K, int N) {
+    const int K16 = K & ~15, K8 = K & ~7;
+    const int nblk = N >> 2;
+    _Pragma("omp parallel for schedule(static)")
+    for (int nb4 = 0; nb4 < nblk; nb4++) {
+        const int n = nb4 << 2;
+        float *w0 = dW + (size_t)(n + 0) * K, *w1 = dW + (size_t)(n + 1) * K;
+        float *w2 = dW + (size_t)(n + 2) * K, *w3 = dW + (size_t)(n + 3) * K;
+        float b0 = 0.0f, b1 = 0.0f, b2 = 0.0f, b3 = 0.0f;
+        int kb = 0;
+        for (; kb + 16 <= K16; kb += 16) {
+            __m256 a00 = _mm256_loadu_ps(w0 + kb), a01 = _mm256_loadu_ps(w0 + kb + 8);
+            __m256 a10 = _mm256_loadu_ps(w1 + kb), a11 = _mm256_loadu_ps(w1 + kb + 8);
+            __m256 a20 = _mm256_loadu_ps(w2 + kb), a21 = _mm256_loadu_ps(w2 + kb + 8);
+            __m256 a30 = _mm256_loadu_ps(w3 + kb), a31 = _mm256_loadu_ps(w3 + kb + 8);
+            for (int m = 0; m < M; m++) {
+                const float *xm = X + (size_t)m * K + kb;
+                const __m256 x0 = _mm256_loadu_ps(xm), x1 = _mm256_loadu_ps(xm + 8);
+                const float *dm = dY + (size_t)m * N;
+                const __m256 v0 = _mm256_set1_ps(dm[n + 0]), v1 = _mm256_set1_ps(dm[n + 1]);
+                const __m256 v2 = _mm256_set1_ps(dm[n + 2]), v3 = _mm256_set1_ps(dm[n + 3]);
+                a00 = _mm256_fmadd_ps(v0, x0, a00); a01 = _mm256_fmadd_ps(v0, x1, a01);
+                a10 = _mm256_fmadd_ps(v1, x0, a10); a11 = _mm256_fmadd_ps(v1, x1, a11);
+                a20 = _mm256_fmadd_ps(v2, x0, a20); a21 = _mm256_fmadd_ps(v2, x1, a21);
+                a30 = _mm256_fmadd_ps(v3, x0, a30); a31 = _mm256_fmadd_ps(v3, x1, a31);
+                b0 += dm[n + 0]; b1 += dm[n + 1]; b2 += dm[n + 2]; b3 += dm[n + 3];
+            }
+            _mm256_storeu_ps(w0 + kb, a00); _mm256_storeu_ps(w0 + kb + 8, a01);
+            _mm256_storeu_ps(w1 + kb, a10); _mm256_storeu_ps(w1 + kb + 8, a11);
+            _mm256_storeu_ps(w2 + kb, a20); _mm256_storeu_ps(w2 + kb + 8, a21);
+            _mm256_storeu_ps(w3 + kb, a30); _mm256_storeu_ps(w3 + kb + 8, a31);
+        }
+        for (; kb + 8 <= K8; kb += 8) {
+            __m256 a0 = _mm256_loadu_ps(w0 + kb), a1 = _mm256_loadu_ps(w1 + kb);
+            __m256 a2 = _mm256_loadu_ps(w2 + kb), a3 = _mm256_loadu_ps(w3 + kb);
+            for (int m = 0; m < M; m++) {
+                const __m256 xv = _mm256_loadu_ps(X + (size_t)m * K + kb);
+                const float *dm = dY + (size_t)m * N;
+                a0 = _mm256_fmadd_ps(_mm256_set1_ps(dm[n + 0]), xv, a0);
+                a1 = _mm256_fmadd_ps(_mm256_set1_ps(dm[n + 1]), xv, a1);
+                a2 = _mm256_fmadd_ps(_mm256_set1_ps(dm[n + 2]), xv, a2);
+                a3 = _mm256_fmadd_ps(_mm256_set1_ps(dm[n + 3]), xv, a3);
+            }
+            _mm256_storeu_ps(w0 + kb, a0); _mm256_storeu_ps(w1 + kb, a1);
+            _mm256_storeu_ps(w2 + kb, a2); _mm256_storeu_ps(w3 + kb, a3);
+        }
+        for (int k = K8; k < K; k++) {
+            float s0 = w0[k], s1 = w1[k], s2 = w2[k], s3 = w3[k];
+            for (int m = 0; m < M; m++) {
+                const float xv = X[(size_t)m * K + k];
+                const float *dm = dY + (size_t)m * N;
+                s0 += dm[n + 0] * xv; s1 += dm[n + 1] * xv;
+                s2 += dm[n + 2] * xv; s3 += dm[n + 3] * xv;
+            }
+            w0[k] = s0; w1[k] = s1; w2[k] = s2; w3[k] = s3;
+        }
+        if (db) { db[n + 0] += b0; db[n + 1] += b1; db[n + 2] += b2; db[n + 3] += b3; }
+    }
+    /* queue : N % 4 colonnes (les largeurs réelles 72/104/216/288 sont multiples
+       de 4, donc jamais parcourue — mais la sémantique doit rester exacte). */
+    for (int n = nblk << 2; n < N; n++) {
+        float *dw = dW + (size_t)n * K;
+        float accb = 0.0f;
+        for (int m = 0; m < M; m++) accb += dY[(size_t)m * N + n];
+        for (int k = 0; k < K; k++) {
+            float acc = dw[k];
+            for (int m = 0; m < M; m++) acc += dY[(size_t)m * N + n] * X[(size_t)m * K + k];
+            dw[k] = acc;
+        }
+        if (db) db[n] += accb;
+    }
+}
 #endif /* x86_64 */
 
 static void mm_nt(float *Y, const float *X, const float *W, const float *b,
@@ -399,6 +698,8 @@ static void mm_nt(float *Y, const float *X, const float *W, const float *b,
 static void mm_dxd(float *dX, const float *dY, const float *W, int M, int K, int N) {
 #if defined(__x86_64__) || defined(_M_X64)
     if (cpuAvx2 < 0) cpuAvx2 = __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma");
+    if (cpuAvx2 && !g_gemmOld) { const double tp0 = g_prof ? profNow() : 0;
+        mm_dxd_avx2_mb4(dX, dY, W, M, K, N); if (g_prof) g_tGemm += profNow() - tp0; return; }
     if (cpuAvx2) { const double tp0 = g_prof ? profNow() : 0; mm_dxd_avx2(dX, dY, W, M, K, N); if (g_prof) g_tGemm += profNow() - tp0; return; }
 #endif
     for (int m = 0; m < M; m++) {
@@ -415,6 +716,8 @@ static void mm_tndw(float *dW, float *db, const float *dY, const float *X,
                     int M, int K, int N) {
 #if defined(__x86_64__) || defined(_M_X64)
     if (cpuAvx2 < 0) cpuAvx2 = __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma");
+    if (cpuAvx2 && !g_gemmOld) { const double tp0 = g_prof ? profNow() : 0;
+        mm_tndw_avx2_mb4(dW, db, dY, X, M, K, N); if (g_prof) g_tGemm += profNow() - tp0; return; }
     if (cpuAvx2) { const double tp0 = g_prof ? profNow() : 0; mm_tndw_avx2(dW, db, dY, X, M, K, N); if (g_prof) g_tGemm += profNow() - tp0; return; }
 #endif
     _Pragma("omp parallel for schedule(static)")

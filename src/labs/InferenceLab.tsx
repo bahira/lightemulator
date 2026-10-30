@@ -22,10 +22,21 @@ export default function InferenceLab() {
         // relatif au document (Pages : /lightemulator/lm_infer.wasm ; dev : public/)
         const base = './';
       try {
+        // un asset manquant ne doit pas passer pour un checkpoint corrompu :
+        // un serveur SPA répond index.html (200, text/html) sur un 404 — d'où le contrôle du type.
+        const get = async (name: string) => {
+          const r = await fetch(base + name);
+          const ct = r.headers.get('content-type') ?? '';
+          if (!r.ok || ct.includes('text/html'))
+            throw new Error(
+              `${name} introuvable — régénérer : npm run assets:inference (voir README)`,
+            );
+          return r.arrayBuffer();
+        };
         const [wasmBuf, ckptBuf, vocabBuf] = await Promise.all([
-          fetch(base + 'lm_infer.wasm').then((r) => r.arrayBuffer()),
-          fetch(base + 'lm_checkpoint.bin').then((r) => r.arrayBuffer()),
-          fetch(base + 'lm_vocab.bin').then((r) => r.arrayBuffer()),
+          get('lm_infer.wasm'),
+          get('lm_checkpoint.bin'),
+          get('lm_vocab.bin'),
         ]);
         // wasi shim — fd_write réel (sinon wasi-libc boucle sur *nwritten)
         let exportsRef: any = null;
@@ -62,15 +73,19 @@ export default function InferenceLab() {
         // checkpoint : int V + nParams floats — vérification exacte
         const dv = new DataView(ckptBuf);
         const V = dv.getInt32(0, true);
-        if (V !== 104 || 4 + nParams * 4 !== ckptBuf.byteLength) {
-          setStatus(`checkpoint incompatible (V=${V}, params=${nParams})`);
+        if (V !== vocabBuf.byteLength || 4 + nParams * 4 !== ckptBuf.byteLength) {
+          setStatus(
+            `checkpoint incompatible (V=${V} · vocab=${vocabBuf.byteLength} · params=${nParams})` +
+              ` — V et la taille du vocabulaire doivent coïncider : régénérer avec npm run assets:inference`,
+          );
           return;
         }
         for (let i = 0; i < nParams; i++) mem[i] = dv.getFloat32(4 + i * 4, true);
-        pristine.current = Float64Array.from(Array.from(mem)) as unknown as Float32Array;
         pristine.current = new Float32Array(mem); // copie pristine (RESTAURE avant chaque mode)
         Ee.wasm_refresh();
-        setStatus(`270k params chargés — module 52.2 kB (wasm SIMD v128), zéro dépendance`);
+        setStatus(
+          `${(nParams / 1000).toFixed(0)}k params chargés (V=${V}) — module ${(wasmBuf.byteLength / 1000).toFixed(1)} kB wasm, zéro dépendance`,
+        );
         setReady(true);
       } catch (e: any) {
         setStatus('échec du chargement : ' + (e?.message ?? e));
@@ -158,15 +173,15 @@ export default function InferenceLab() {
           <p className="text-emerald-300">✓ Réel</p>
           <ul className="space-y-1 text-slate-500">
             <li>· Le <b>vrai module C</b> (trainer 270k params) compilé wasm32-wasip1 — 47.6 kB stripped, inference seule</li>
-            <li>· Checkpoint réel : 800 steps sur TinyStories, val loss 3.15 (hasard 4.64) — le modèle a appris</li>
+            <li>· Checkpoint réel livré : 500 steps sur l'échantillon 32 Ko du dépôt (V=104), val loss 2.98 (hasard 4.64) — le modèle a appris</li>
             <li>· 4 modes de quantification (FP32/E8/INT8/INT4) — même seed = comparaison appariée, restauration FP32 avant chaque mode (jamais en cascade)</li>
-            <li>· ~150 tok/s en wasm (SIMD v128 auto-vectorisé) dans le navigateur — offline, private, zéro serveur</li>
+            <li>· ~230 tok/s mesurés (wasm SIMD v128, hors navigateur) — offline, private, zéro serveur</li>
           </ul>
           <p className="text-amber-300 pt-1">✗ Limites (documentées)</p>
           <ul className="space-y-1 text-slate-500">
             <li>· GEMM auto-vectorisé ×1.25 seulement (le chemin scalaire a un accès W stridé) — l'upgrade est un <Formula>kernel v128 manuel sur W transposé</Formula> (les tuiles 4-acc se vectorisent 1:1, ×2-3 probable)</li>
-            <li>· La quantification est <b>simulée</b> : les poids restent fp32 en mémoire — même coût compute, la claim est qualité-par-bit (erreur RMS 7% INT4), pas la taille mémoire</li>
-            <li>· Modèle char-level 270k / 800 steps — texte pseudo-cohérent, pas un LLM utile</li>
+            <li>· La quantification est <b>simulée</b> : les poids restent fp32 en mémoire — même coût compute, la claim est qualité-par-bit (erreur RMS 6,0 % INT4 mesurée), pas la taille mémoire</li>
+            <li>· Modèle char-level 270k / 500 steps sur 32 Ko — texte pseudo-cohérent, pas un LLM utile</li>
           </ul>
         </div>
       </Panel>

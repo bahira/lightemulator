@@ -338,6 +338,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--profile")) g_prof = 1;
         else if (!strcmp(argv[i], "--nogen")) gen = 0;
         else if (!strcmp(argv[i], "--nosimd")) cpuAvx2 = 0;
+        else if (!strcmp(argv[i], "--no512")) cpuAvx512 = 0; /* force le chemin AVX2 (mb4), pour l'A/B */
         else if (!strcmp(argv[i], "--gemm-old")) g_gemmOld = 1;
         else if (!strcmp(argv[i], "--resume")) resume = 1;
         else if (!strcmp(argv[i], "--quant-e8")) quantMode = 1;

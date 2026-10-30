@@ -1,0 +1,51 @@
+name: pages
+
+# La démo publiée (docs/demo.html) est un build single-file : elle doit être
+# régénérée à chaque push sur master, sinon le site diverge des sources
+# (c'est exactement ce qui avait laissé le lab « Inference edge » cassé).
+#
+# Pages reste en mode "legacy" (branche master, dossier /docs) : ce job
+# reconstruit docs/ et commite le résultat. Les commits faits avec GITHUB_TOKEN
+# ne déclenchent pas d'autre workflow — pas de boucle.
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages-sync
+  cancel-in-progress: false
+
+jobs:
+  sync-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: rebuild docs/ (assets d'inférence + build single-file)
+        run: npm run docs:sync
+
+      - name: commit si la démo publiée a changé
+        run: |
+          if git diff --quiet -- docs; then
+            echo "docs/ déjà à jour — rien à publier"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs
+          git commit -m "chore(docs): rebuild demo from source [skip ci]"
+          git push

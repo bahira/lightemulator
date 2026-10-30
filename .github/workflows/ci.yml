@@ -12,10 +12,28 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm run test
+      - name: smoke headless des 16 labs (montage sans navigateur)
+        run: npm run smoke:labs
+      - name: smoke DOM jsdom — 16 labs dessinés + galerie + partage + deep-link
+        run: |
+          set +e
+          npm run smoke:dom 2>&1 | tee /tmp/dom.txt
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            # les logs d'actions ne sont pas lisibles depuis l'API : on remonte la fin
+            # du test en annotation d'erreur pour pouvoir la lire
+            msg=$(tail -c 900 /tmp/dom.txt | tr '\n' ' ' | tr -d '%\r')
+            echo "::error title=smoke:dom::$msg"
+          fi
+          exit "$rc"
+      - name: la démo publiée (docs/) est à jour avec les sources
+        run: npm run docs:check
+      - name: chaîne d'inférence wasm (assets + dimensions + quantification)
+        run: npm run verify:inference
 
   c-bench:
     runs-on: ubuntu-latest
@@ -40,6 +58,33 @@ jobs:
             cat /tmp/bench_out.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: GEMM micro-kernel — parité + A/B 4 lignes M
+        run: |
+          gcc -O2 -march=native -ffast-math -o /tmp/bench_mm bench/bench_mm_isa.c -lm
+          set +e
+          /tmp/bench_mm | tee /tmp/bench_mm.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            msg=$(tail -c 900 /tmp/bench_mm.txt | tr '\n' ' ' | tr -d '%\r')
+            echo "::error title=GEMM parite::$msg"
+            exit "$rc"
+          fi
+          # profil « runner sans AVX-512 » : les variantes 512 doivent disparaître des totaux
+          LM_NO512=1 /tmp/bench_mm | tail -6 > /tmp/bench_mm_no512.txt
+          {
+            echo "### GEMM mm_nt_t — A/B 4 lignes M"
+            echo '```'
+            cat /tmp/bench_mm.txt
+            echo '```'
+            echo '```'
+            cat /tmp/bench_mm_no512.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: claims — re-mesure sur le runner (CPU/gcc réels)
+        run: |
+          node tools/claims.mjs | tee /tmp/claims.md
+          cat /tmp/claims.md >> "$GITHUB_STEP_SUMMARY"
       - name: training C smoke (échantillon 32 KB commité — loss doit baisser)
         run: |
           gcc -O2 -march=native -ffast-math -fopenmp -o /tmp/lm_train lm_c/lm_main.c -lm

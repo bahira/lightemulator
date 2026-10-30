@@ -3,11 +3,22 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "esbuild src/physics/selftest.ts --bundle --platform=node --format=esm --outfile=.selftest.mjs && node .selftest.mjs"
+    "test": "esbuild src/physics/selftest.ts --bundle --platform=node --format=esm --outfile=.selftest.mjs && node .selftest.mjs",
+    "assets:inference": "node tools/prepare_inference_assets.mjs",
+    "docs:sync": "node tools/prepare_inference_assets.mjs && vite build && node tools/sync_docs.mjs",
+    "smoke:labs": "esbuild tools/smoke_labs.tsx --bundle --platform=node --format=esm --outfile=.smoke-labs.mjs --jsx=automatic --external:react --external:react-dom --external:react/jsx-runtime && node .smoke-labs.mjs",
+    "verify:inference": "node tools/verify_inference_wasm.mjs",
+    "smoke:dom": "esbuild tools/dom_smoke.tsx --bundle --platform=node --format=esm --outfile=.dom-smoke.mjs --jsx=automatic --external:react --external:react-dom --external:react-dom/client --external:react/jsx-runtime --external:jsdom && node .dom-smoke.mjs",
+    "docs:check": "node tools/prepare_inference_assets.mjs && vite build && node tools/sync_docs.mjs --check",
+    "claims": "node tools/claims.mjs",
+    "claims:write": "node tools/claims.mjs --write"
   },
   "dependencies": {
     "clsx": "2.1.1",
@@ -21,9 +32,10 @@
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "5.1.1",
+    "jsdom": "30.1.3",
     "tailwindcss": "4.1.17",
     "typescript": "5.9.3",
-    "vite": "7.3.2",
+    "vite": "7.3.7",
     "vite-plugin-singlefile": "2.3.0"
   }
 }

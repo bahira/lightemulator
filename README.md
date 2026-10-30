@@ -7,7 +7,8 @@
 [![CI](https://github.com/bahira/lightemulator/actions/workflows/ci.yml/badge.svg)](https://github.com/bahira/lightemulator/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-44%2F44-brightgreen)]() [![parity](https://img.shields.io/badge/kernel%20parity-6%2F6-brightgreen)]() [![gradcheck](https://img.shields.io/badge/gradcheck-PASS-brightgreen)]() [![license](https://img.shields.io/badge/license-MIT-blue)]()
 
 **[🔬 Live verification page →](https://bahira.github.io/lightemulator/)** — run the kernels in your browser, watch the receipts appear.
-**[🎮 Full emulator demo →](https://bahira.github.io/lightemulator/demo.html)** — the 9 labs, running client-side, no install.
+**[🎮 Full emulator demo →](https://bahira.github.io/lightemulator/demo.html)** — the 16 labs, running client-side, no install.
+**[◇ Gallery of shareable scenes →](https://bahira.github.io/lightemulator/demo.html)** — press `g` (or ◇ galerie) : chaque scène est une URL.
 
 </div>
 
@@ -19,9 +20,19 @@ A hand-tuned GPT written from scratch in pure C, with AVX2 kernels faster than l
 
 ## Receipts
 
+> **Provenance.** Cette table a été mesurée sur un **i7-7660U (2016)** avec gcc, le 2026-09-21 —
+> détail dans [`SPEAR_REPORT_2026-09-21.md`](SPEAR_REPORT_2026-09-21.md). Les gains de kernels
+> dépendent du CPU et du compilateur : `npm run claims` re-mesure tout **sur votre machine** et écrit
+> [`CLAIMS.md`](CLAIMS.md). Sur un CPU récent, `exp` **scalaire** est à parité avec libm (×1,0) alors que
+> `exp8` **AVX2** monte à ×4,7–5,8 : c'est le vectoriel qui gagne, pas le scalaire.
+
 | Kernel / system | Gain vs baseline | Accuracy |
 |---|---|---|
 | GEMM micro-kernel (`mm_nt_t`, 4-accumulator) | **×1.78–2.19** (5 real shapes, isolated bench) | max\|diff\| 1.4e-6 vs scalar |
+| **GEMM 4 lignes M** (`mm_nt_t`, AVX2 4M×16) | **×1.53–2.07 vs le noyau 4×8** (bench/bench_mm_isa.c) | **bit-identique** (max\|diff\| = 0) |
+| **GEMM 4 lignes M + AVX-512** (4M×64) | **×1.71–2.37 vs 4×8** · ×38.5 vs scalaire | bit-identique |
+| **Backward bloqué** (`mm_dxd`, `mm_tndw`, 4 lignes/colonnes) | GEMM end-to-end **×1.44** vs avant (6.9σ) | auto-test max\|diff\| = 0 · gradcheck PASS |
+| **Débit d'entraînement** (60 steps, 5 rondes appariées) | **×1.28** (11,8–14,6 k → 15,6–19,1 k tok/s), 5.0σ | loss identique à 3 décimales |
 | GEMM end-to-end (fwd + bwd multi-acc) | **~×3** on GEMM wall time | gradcheck PASS (0.4% worst) |
 | `exp` — Padé-refined polynomial + ldexp | **×2.35** vs libm | L∞ 1.5e-5 on [−14, +2] |
 | `tanh` — rational form | **×5.3** vs libm | L∞ 9e-3 |
@@ -51,8 +62,11 @@ Everything in `src/physics/*.ts` is **pure TypeScript, zero dependencies** — c
 ```bash
 # the emulator
 npm install
-npm run dev      # interactive labs, all client-side
-npm run test     # grounded loop headless: 44 tests
+npm run dev         # interactive labs, all client-side
+npm run test        # grounded loop headless: 44 tests
+npm run smoke:dom   # 16 labs montés + dessinés dans jsdom, galerie & partage testés
+npm run claims      # re-mesure les chiffres du README sur cette machine → CLAIMS.md
+npm run docs:sync   # régénère la démo publiée (docs/demo.html) depuis les sources
 
 # the GPT (needs gcc + OpenMP, TinyStories data in data/)
 gcc -O2 -march=native -ffast-math -fopenmp -o lm_c/lm_train.exe lm_c/lm_main.c -lm
@@ -63,7 +77,8 @@ lm_c/lm_train.exe --steps 300 --gradcheck
 
 The original micro-kernel used **one accumulator chain** per 8-column tile → FMA latency (~4 cy) unmasked, ≈ 0.25 FMA/cy against a peak of 2. The fix: **4 tiles of 8 columns sharing a broadcast**, contiguous loads, 4 independent FMA chains — ×1.78–2.19 on real shapes (qkv, attn, fc1, fc2, out). The backward pass got the same treatment (`mm_dxd`, `mm_tndw` with register accumulators over the full M dimension).
 
-The honest parts: attention tiling caps at ×1.05 wall time (Amdahl — skipped on purpose), AVX-512 is unreachable on this hardware, and `rsqrt` currently trades speed for accuracy.
+The honest parts: attention tiling caps at ×1.05 wall time (Amdahl — skipped on purpose), and `rsqrt` currently trades speed for accuracy.
+The AVX-512 claim was half-wrong and is now measured: porting the **same** 1-row kernel to 16 lanes is *slower* (×0.87 — 512-bit port pressure and downclock), but **4-row M blocking** cuts the W traffic by 4 and pays ×2.18 on the kernel (×1.86 for the AVX2-only variant) and ×1.44 on end-to-end GEMM. Width was never the bottleneck; traffic was.
 
 ## The verification loop
 

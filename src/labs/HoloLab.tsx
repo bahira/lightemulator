@@ -7,7 +7,7 @@ import {
 } from '../physics/holography';
 import {
   Panel, Stat, Tag, Slider, Formula, Segmented, Btn,
-  useCanvas, drawGrid, drawSeries, axisLabel, paintField, drawImageBuffer, LUT,
+  useCanvas, drawGrid, drawSeries, axisLabel, paintField, drawImageBuffer, LUT, useHashNumber,
 } from '../ui/kit';
 
 const GRID = 128;
@@ -59,7 +59,7 @@ function presetAmp(id: PresetId): Float64Array {
 
 export default function HoloLab() {
   const [preset, setPreset] = useState<PresetId>('anneaux');
-  const [iters, setIters] = useState(40);
+  const [iters, setIters] = useHashNumber('hit', 40);
   const [levels, setLevels] = useState<'2' | '4' | '8' | '16' | '256'>('256');
   const [version, setVersion] = useState(0);       // cible affichée
   const [solveVersion, setSolveVersion] = useState(0); // solveur relancé

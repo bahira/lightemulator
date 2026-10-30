@@ -2,6 +2,83 @@
 
 Toutes les modifications notables de ce projet. Format basé sur [Keep a Changelog](https://keepachangelog.com/), semver.
 
+## [1.2.0] — 2026-10-30
+
+Perf, mesurée et falsifiable. Aucune régression de justesse : autotest GEMM `max|diff| = 0`,
+gradcheck PASS (0.0253), 44/44 tests JS, loss identique à 3 décimales.
+
+### Ajouté
+- **GEMM 4 lignes M** : `mm_nt_t_avx2_mb4` (4M×16) et `mm_nt_t_avx512_mb4` (4M×64). Le noyau
+  1-ligne relisait W une fois par ligne M (formes réelles : 62–83 kB, L2) — il était limité par
+  le trafic, pas par les FMA. Résultat : **×1.53–2.37 vs le noyau 4×8**, ×38.5 vs scalaire.
+- **Backward bloqué** : `mm_dxd_avx2_mb4` (4 lignes) et `mm_tndw_avx2_mb4` (4 colonnes), même
+  raisonnement sur W (dxd) et X (tndw). GEMM end-to-end **×1.44** (6.9σ, 4 rondes appariées).
+- **Dispatch 3 niveaux** : scalaire / AVX2 / AVX-512 (`__builtin_cpu_supports("avx512f")`),
+  fonctions `target(...)` compilables partout (vérifié en `-march=x86-64`). `--no512` force le
+  chemin AVX2 pour l'A/B.
+- `bench/bench_mm_isa.c` : 5 variantes, rondes entrelacées, médiane, ratios appariés en σ, parité
+  `max|diff|` vs scalaire. CI : parité vérifiée, tableau dans le job summary.
+
+### Corrigé
+- **`npm run smoke:dom` mourait en OOM** (6 min, 1 000 001 entrées User Timing). Le stub
+  `requestAnimationFrame` se réarmait en `setTimeout(0)` : ~25 000 images/s sous jsdom, chaque
+  image étant un render React, et React 19 (build dev) émet un `performance.measure` par render.
+  Le stub simule maintenant un 60 Hz virtuel avec un **budget de frames par section** → 4,4 s,
+  16 labs + shell + galerie + partage au vert.
+- **`bench/bench_mm_isa.c` sur un runner sans AVX-512** : les variantes 512 sautaient le calcul
+  mais entraient quand même dans les totaux (5 000 000 000 ms affichés, « meilleur » faux). Elles
+  sont désormais omises ligne et total. `LM_NO512=1` reproduit ce profil à volonté ; la CI le
+  mesure aussi.
+- Ancien fichier `lm_c/bench_mm_isa.c` déplacé en `bench/` (les benchmarks ne sont pas des sources
+  du moteur).
+
+### Mesuré (et ce que ça corrige)
+- **AVX-512 : la claim du README était fausse à moitié.** Porter le *même* noyau 1-ligne en
+  16 voies est **plus lent** (×0.87 : pression ports 512 bits + downclock). C'est le **blocage
+  4 lignes** qui paie — la largeur SIMD n'a jamais été le goulot.
+- Débit d'entraînement : 11,8–14,6 k → **15,6–19,1 k tok/s** (×1.28, 5 rondes appariées, 5.0σ).
+- GEMM wall time (40 steps, 5 rondes appariées) : 553–590 ms → **361–383 ms**
+  (×1.44 médian, 6.9σ ; 1.28–1.85 selon les rondes).
+
+[1.2.0]: https://github.com/bahira/lightemulator/releases/tag/v1.2.0
+
+## [1.1.0] — 2026-10-30
+
+Aucune régression de physique (44/44 tests inchangés). Cette version rend la démo
+**partageable**, la publication **reproductible** et les chiffres **re-mesurables**.
+
+### Ajouté
+- **Galerie d'exemples partageables** (`src/gallery.ts` + `src/ui/Gallery.tsx`) : 10 scènes
+  réglées (coupleur, maillage 6×6 et 18×18, Ising au-dessus/sous le seuil, zéro de dispersion,
+  HOM, CHSH, Gerchberg–Saxton 80 itérations). Chaque carte = une URL.
+- **État dans l'URL** : `useHashNumber` (kit) + `#lab=<id>` épinglé par le shell. Les paramètres
+  principaux de BPM, MZI, Ising, dispersion, quantique et holographie sont désormais exportés ;
+  un lien partagé rouvre le bon lab avec la bonne scène. Bouton **⧉ partager**, raccourci `g`.
+- `npm run smoke:dom` — les 16 labs sont montés **et dessinés** dans jsdom (canvas factice),
+  plus des tests de la galerie, du partage et du deep-link.
+- `npm run verify:inference` — assets wasm, dimensions, génération, effectivité de la quantification.
+- `npm run claims` / `claims:write` — re-mesure sur la machine locale et écrit `CLAIMS.md`
+  (provenance datée : CPU, OS, Node, gcc).
+- `npm run docs:sync` / `docs:check` — la démo publiée est un build reproductible, et la CI échoue
+  si `docs/` diverge des sources.
+- Workflow **`pages.yml`** : à chaque push sur `master`, `docs/` est reconstruit et commité
+  (Pages reste en mode legacy `/docs`, aucun réglage de dépôt à changer).
+
+### Corrigé
+- **Lab « Inference edge » opérationnel** : `lm_checkpoint.bin` / `lm_vocab.bin` n'avaient jamais
+  été livrés ; le fallback SPA renvoyait `index.html` sur ces 404, donc le lab lisait du HTML comme
+  checkpoint. Un checkpoint réel **V=104 / 270 000 params** (500 steps, val loss 2,977) est livré,
+  et le chargement vérifie `content-type`, `r.ok`, `V == |vocab|` et la taille exacte.
+- `docs/demo.html` n'était rattachable à aucune commande : il l'est (`docs:sync`).
+- 0 vulnérabilité npm (vite 7.3.2 → 7.3.7, esbuild, source-map-js).
+
+### Modifié (hygiène)
+- Racine dégraissée : 24 fichiers de bench/harnais → `bench/`, 5 prototypes → `experiments/`
+  (avec README), `experiment/` supprimé (doublon de `src/`, sous-ensemble strict).
+- README : provenance datée des mesures + commandes de vérification.
+
+[1.1.0]: https://github.com/bahira/lightemulator/releases/tag/v1.1.0
+
 ## [1.0.0] — 2026-09-27
 
 Premier tag de série. Tout est vérifié par la boucle grounded (44 tests), reproduit par la CI (2 jobs : `test` + `c-bench`).

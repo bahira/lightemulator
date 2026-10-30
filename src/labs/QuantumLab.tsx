@@ -6,7 +6,7 @@ import {
 } from '../physics/quantum';
 import {
   Panel, Stat, Tag, Slider, Formula, Btn,
-  useCanvas, drawGrid, drawSeries, axisLabel,
+  useCanvas, drawGrid, drawSeries, axisLabel, useHashNumber,
 } from '../ui/kit';
 
 // ---------------------------------------------------------------------------
@@ -14,7 +14,7 @@ import {
 // ---------------------------------------------------------------------------
 
 function HomPanel() {
-  const [R, setR] = useState(0.5);
+  const [R, setR] = useHashNumber('qr', 0.5);
   const [x2, setX2] = useState(1);
 
   const curve = useMemo(() => {
@@ -167,9 +167,9 @@ function MziPanel() {
 // ---------------------------------------------------------------------------
 
 function ChshPanel() {
-  const [a, setA] = useState(0);
+  const [a, setA] = useHashNumber('qa', 0);
   const [ap, setAp] = useState(45);
-  const [b, setB] = useState(22.5);
+  const [b, setB] = useHashNumber('qb', 22.5);
   const [bp, setBp] = useState(67.5);
   const d2r = Math.PI / 180;
 

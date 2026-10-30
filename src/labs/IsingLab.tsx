@@ -7,7 +7,7 @@ import {
 import { cimPhysicalTime } from '../physics/latency';
 import {
   Panel, Stat, Slider, Btn, Tag, Formula,
-  useCanvas, drawGrid, drawSeries, axisLabel, downloadFile, useHashParam,
+  useCanvas, drawGrid, drawSeries, axisLabel, downloadFile, useHashParam, useHashNumber,
 } from '../ui/kit';
 
 const KINDS: GraphKind[] = ['cubic', 'erdos', 'torus', 'sk', 'scalefree'];
@@ -32,9 +32,9 @@ export default function IsingLab() {
   const setN = (v: number) => setNStr(String(v));
   const [seed, setSeed] = useState(55);
   const [iterations, setIterations] = useState(1600);
-  const [pump, setPump] = useState(1.1);
+  const [pump, setPump] = useHashNumber('gp', 1.1);
   const [xi, setXi] = useState(0.55);
-  const [noise, setNoise] = useState(0.035);
+  const [noise, setNoise] = useHashNumber('gnz', 0.035);
   const [ahc, setAhc] = useState(true);
   const [trials, setTrials] = useState(4);
   const [busy, setBusy] = useState(false);
