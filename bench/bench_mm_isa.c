@@ -311,6 +311,11 @@ int main(void) {
     if (!have_avx512()) printf("avx512f absent sur ce CPU — variantes 512 marquées non exécutées\n");
     printf("\n");
     double tot[5] = { 0, 0, 0, 0, 0 };
+    /* parité : |Y_kernel - Y_scalaire| rapporté à max|Y_scalaire|. Un millième de
+       différence sur K=288 est du bruit d'ordre d'accumulation FMA, pas un bug. */
+    const double PARITY_TOL = 1e-5;
+    double worst_rel = 0.0;
+    const char *worst_name = "—";
 
     for (int s = 0; s < NS; s++) {
         const int M = sh[s].M, K = sh[s].K, N = sh[s].N;
@@ -325,6 +330,9 @@ int main(void) {
         double t[5][ROUNDS], best[5] = { 1e9, 1e9, 1e9, 1e9, 1e9 };
         float dif[5] = { 0, 0, 0, 0, 0 };
         mm_scalar(Yref, X, Wt, NULL, M, K, N);
+        double refmax = 0.0;
+        for (int i = 0; i < M * N; i++) { const double a = fabs((double)Yref[i]); if (a > refmax) refmax = a; }
+        if (refmax < 1e-9) refmax = 1e-9;
 
         /* rounds entrelacés : chaque round mesure les 5 variantes dans un ordre
            tournant — la dérive thermique/turbo frappe donc toutes les variantes. */
@@ -356,6 +364,8 @@ int main(void) {
             printf("  %-13s med %7.3f ms  best %7.3f  x%5.2f/AVX2 (%.1fsigma)  x%5.2f/scal  max|diff| %.1e\n",
                    name[f], median(t[f], ROUNDS), best[f], mr, sr > 0 ? (mr - 1.0) / sr : 99.0,
                    mean(t[0], ROUNDS) / mean(t[f], ROUNDS), dif[f]);
+            const double rel = dif[f] / refmax;
+            if (rel > worst_rel) { worst_rel = rel; worst_name = name[f]; }
             tot[f] += best[f];
         }
         free(X); free(Wt); free(Y); free(Yref);
@@ -370,5 +380,7 @@ int main(void) {
         if (f > 1 && tot[f] < tot[bestf]) bestf = f;
     }
     printf("meilleur vs AVX2 4x8 : x%.3f (%s)\n", tot[1] / tot[bestf], name[bestf]);
-    return 0;
+    printf("PARITE GEMM : %s (pire écart relatif %.1e sur %s, tolérance %.0e)\n",
+           worst_rel <= PARITY_TOL ? "OK" : "FAIL", worst_rel, worst_name, PARITY_TOL);
+    return worst_rel <= PARITY_TOL ? 0 : 1;
 }
