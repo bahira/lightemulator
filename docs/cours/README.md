@@ -16,7 +16,7 @@
 - auto-test GEMM 4 chemins : max|diff| 1.4e-6
 - gradcheck vs différences finies : 0.4 % pire
 - val loss 3.15 en 800 steps (hasard 4.64)
-- [Démo live](https://bahira.github.io/lightemulator/demo.html) — le module C compilé wasm32, génération INT4/FP32 dans votre navigateur, ~150 tok/s
+- [Démo live](https://bahira.github.io/lightemulator/demo.html) — le module C compilé wasm32, génération INT4/FP32 dans votre navigateur, ~970 tok/s
 
 ## Module 2 — La backward exacte
 

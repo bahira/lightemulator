@@ -128,7 +128,7 @@ export default function InferenceLab() {
       <Panel
         tag="Inference edge · WASM"
         title="Le module C compilé en wasm32 — génération depuis un vrai checkpoint"
-        subtitle="lm_main.c (trainer) compilé wasm32-wasip1 -msimd128 — main() supprimé au link, inference seule : 52.2 kB, zéro dépendance"
+        subtitle="lm_main.c (trainer) compilé wasm32-wasip1 -msimd128 — main() supprimé au link, inference seule : 53.9 kB, zéro dépendance"
         flush
       >
         <div className="space-y-3 p-3.5">
@@ -177,7 +177,7 @@ export default function InferenceLab() {
         <div className="space-y-2 text-[10px] leading-relaxed">
           <p className="text-emerald-300">✓ Réel</p>
           <ul className="space-y-1 text-slate-500">
-            <li>· Le <b>vrai module C</b> (trainer 270k params) compilé wasm32-wasip1 — 47.6 kB stripped, inference seule</li>
+            <li>· Le <b>vrai module C</b> (trainer 270k params) compilé wasm32-wasip1 (zig) — 53.9 kB strippé, inference seule</li>
             <li>· Checkpoint réel livré : 500 steps sur l'échantillon 32 Ko du dépôt (V=104), val loss 2.98 (hasard 4.64) — le modèle a appris</li>
             <li>· 4 modes de quantification — même seed = comparaison appariée, restauration FP32 avant chaque mode (jamais en cascade)</li>
             <li>· <b>INT8/INT4 packés</b> : les poids matriciels sont compactés (1 octet / 2 poids par octet, échelle par colonne) et le GEMM multiplie des entiers — la mémoire affichée ci-dessus est celle des octets réellement occupés (1 055 → 271 → 146 KiB)</li>
