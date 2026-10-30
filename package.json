@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "esbuild src/physics/selftest.ts --bundle --platform=node --format=esm --outfile=.selftest.mjs && node .selftest.mjs"
+    "test": "esbuild src/physics/selftest.ts --bundle --platform=node --format=esm --outfile=.selftest.mjs && node .selftest.mjs",
+    "assets:inference": "node tools/prepare_inference_assets.mjs",
+    "docs:sync": "node tools/prepare_inference_assets.mjs && vite build && node tools/sync_docs.mjs",
+    "smoke:labs": "esbuild tools/smoke_labs.tsx --bundle --platform=node --format=esm --outfile=.smoke-labs.mjs --jsx=automatic --external:react --external:react-dom --external:react/jsx-runtime && node .smoke-labs.mjs",
+    "verify:inference": "node tools/verify_inference_wasm.mjs"
   },
   "dependencies": {
     "clsx": "2.1.1",

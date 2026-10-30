@@ -16,6 +16,10 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm run test
+      - name: smoke headless des 16 labs (montage sans navigateur)
+        run: npm run smoke:labs
+      - name: chaîne d'inférence wasm (assets + dimensions + quantification)
+        run: npm run verify:inference
 
   c-bench:
     runs-on: ubuntu-latest
