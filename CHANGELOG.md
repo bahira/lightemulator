@@ -2,6 +2,43 @@
 
 Toutes les modifications notables de ce projet. Format basé sur [Keep a Changelog](https://keepachangelog.com/), semver.
 
+## [1.1.0] — 2026-10-30
+
+Aucune régression de physique (44/44 tests inchangés). Cette version rend la démo
+**partageable**, la publication **reproductible** et les chiffres **re-mesurables**.
+
+### Ajouté
+- **Galerie d'exemples partageables** (`src/gallery.ts` + `src/ui/Gallery.tsx`) : 10 scènes
+  réglées (coupleur, maillage 6×6 et 18×18, Ising au-dessus/sous le seuil, zéro de dispersion,
+  HOM, CHSH, Gerchberg–Saxton 80 itérations). Chaque carte = une URL.
+- **État dans l'URL** : `useHashNumber` (kit) + `#lab=<id>` épinglé par le shell. Les paramètres
+  principaux de BPM, MZI, Ising, dispersion, quantique et holographie sont désormais exportés ;
+  un lien partagé rouvre le bon lab avec la bonne scène. Bouton **⧉ partager**, raccourci `g`.
+- `npm run smoke:dom` — les 16 labs sont montés **et dessinés** dans jsdom (canvas factice),
+  plus des tests de la galerie, du partage et du deep-link.
+- `npm run verify:inference` — assets wasm, dimensions, génération, effectivité de la quantification.
+- `npm run claims` / `claims:write` — re-mesure sur la machine locale et écrit `CLAIMS.md`
+  (provenance datée : CPU, OS, Node, gcc).
+- `npm run docs:sync` / `docs:check` — la démo publiée est un build reproductible, et la CI échoue
+  si `docs/` diverge des sources.
+- Workflow **`pages.yml`** : à chaque push sur `master`, `docs/` est reconstruit et commité
+  (Pages reste en mode legacy `/docs`, aucun réglage de dépôt à changer).
+
+### Corrigé
+- **Lab « Inference edge » opérationnel** : `lm_checkpoint.bin` / `lm_vocab.bin` n'avaient jamais
+  été livrés ; le fallback SPA renvoyait `index.html` sur ces 404, donc le lab lisait du HTML comme
+  checkpoint. Un checkpoint réel **V=104 / 270 000 params** (500 steps, val loss 2,977) est livré,
+  et le chargement vérifie `content-type`, `r.ok`, `V == |vocab|` et la taille exacte.
+- `docs/demo.html` n'était rattachable à aucune commande : il l'est (`docs:sync`).
+- 0 vulnérabilité npm (vite 7.3.2 → 7.3.7, esbuild, source-map-js).
+
+### Modifié (hygiène)
+- Racine dégraissée : 24 fichiers de bench/harnais → `bench/`, 5 prototypes → `experiments/`
+  (avec README), `experiment/` supprimé (doublon de `src/`, sous-ensemble strict).
+- README : provenance datée des mesures + commandes de vérification.
+
+[1.1.0]: https://github.com/bahira/lightemulator/releases/tag/v1.1.0
+
 ## [1.0.0] — 2026-09-27
 
 Premier tag de série. Tout est vérifié par la boucle grounded (44 tests), reproduit par la CI (2 jobs : `test` + `c-bench`).

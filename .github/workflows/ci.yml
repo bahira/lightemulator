@@ -18,6 +18,10 @@ jobs:
       - run: npm run test
       - name: smoke headless des 16 labs (montage sans navigateur)
         run: npm run smoke:labs
+      - name: smoke DOM jsdom — 16 labs dessinés + galerie + partage + deep-link
+        run: npm run smoke:dom
+      - name: la démo publiée (docs/) est à jour avec les sources
+        run: npm run docs:check
       - name: chaîne d'inférence wasm (assets + dimensions + quantification)
         run: npm run verify:inference
 
@@ -44,6 +48,10 @@ jobs:
             cat /tmp/bench_out.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: claims — re-mesure sur le runner (CPU/gcc réels)
+        run: |
+          node tools/claims.mjs | tee /tmp/claims.md
+          cat /tmp/claims.md >> "$GITHUB_STEP_SUMMARY"
       - name: training C smoke (échantillon 32 KB commité — loss doit baisser)
         run: |
           gcc -O2 -march=native -ffast-math -fopenmp -o /tmp/lm_train lm_c/lm_main.c -lm

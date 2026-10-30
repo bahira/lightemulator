@@ -7,7 +7,8 @@
 [![CI](https://github.com/bahira/lightemulator/actions/workflows/ci.yml/badge.svg)](https://github.com/bahira/lightemulator/actions/workflows/ci.yml) [![tests](https://img.shields.io/badge/tests-44%2F44-brightgreen)]() [![parity](https://img.shields.io/badge/kernel%20parity-6%2F6-brightgreen)]() [![gradcheck](https://img.shields.io/badge/gradcheck-PASS-brightgreen)]() [![license](https://img.shields.io/badge/license-MIT-blue)]()
 
 **[🔬 Live verification page →](https://bahira.github.io/lightemulator/)** — run the kernels in your browser, watch the receipts appear.
-**[🎮 Full emulator demo →](https://bahira.github.io/lightemulator/demo.html)** — the 9 labs, running client-side, no install.
+**[🎮 Full emulator demo →](https://bahira.github.io/lightemulator/demo.html)** — the 16 labs, running client-side, no install.
+**[◇ Gallery of shareable scenes →](https://bahira.github.io/lightemulator/demo.html)** — press `g` (or ◇ galerie) : chaque scène est une URL.
 
 </div>
 
@@ -18,6 +19,12 @@
 A hand-tuned GPT written from scratch in pure C, with AVX2 kernels faster than libm — next to a browser emulator that simulates photonic computing (beam propagation, Mach-Zehnder meshes, coherent Ising machines), control theory, and optics. No BLAS. No PyTorch. No hand-waving: every number in this README is measured and reproducible.
 
 ## Receipts
+
+> **Provenance.** Cette table a été mesurée sur un **i7-7660U (2016)** avec gcc, le 2026-09-21 —
+> détail dans [`SPEAR_REPORT_2026-09-21.md`](SPEAR_REPORT_2026-09-21.md). Les gains de kernels
+> dépendent du CPU et du compilateur : `npm run claims` re-mesure tout **sur votre machine** et écrit
+> [`CLAIMS.md`](CLAIMS.md). Sur un CPU récent, `exp` **scalaire** est à parité avec libm (×1,0) alors que
+> `exp8` **AVX2** monte à ×4,7–5,8 : c'est le vectoriel qui gagne, pas le scalaire.
 
 | Kernel / system | Gain vs baseline | Accuracy |
 |---|---|---|
@@ -51,8 +58,11 @@ Everything in `src/physics/*.ts` is **pure TypeScript, zero dependencies** — c
 ```bash
 # the emulator
 npm install
-npm run dev      # interactive labs, all client-side
-npm run test     # grounded loop headless: 44 tests
+npm run dev         # interactive labs, all client-side
+npm run test        # grounded loop headless: 44 tests
+npm run smoke:dom   # 16 labs montés + dessinés dans jsdom, galerie & partage testés
+npm run claims      # re-mesure les chiffres du README sur cette machine → CLAIMS.md
+npm run docs:sync   # régénère la démo publiée (docs/demo.html) depuis les sources
 
 # the GPT (needs gcc + OpenMP, TinyStories data in data/)
 gcc -O2 -march=native -ffast-math -fopenmp -o lm_c/lm_train.exe lm_c/lm_main.c -lm

@@ -1,5 +1,8 @@
 import { useState, lazy, Suspense, useEffect } from 'react';
 import { cn } from './utils/cn';
+import { Gallery } from './ui/Gallery';
+import { HASH_KEYS_BY_LAB, presetHash, type LabId, type Preset } from './gallery';
+import { copyText } from './ui/kit';
 import BpmLab from './labs/BpmLab';
 
 const ProcessorLab = lazy(() => import('./labs/ProcessorLab'));
@@ -18,7 +21,25 @@ const LangevinLab = lazy(() => import('./labs/LangevinLab'));
 const OptoTransformerLab = lazy(() => import('./labs/OptoTransformerLab'));
 const InferenceLab = lazy(() => import('./labs/InferenceLab'));
 
-type TabId = 'bpm' | 'processor' | 'ising' | 'kan' | 'fep' | 'validate' | 'spear' | 'control' | 'dispersion' | 'drones' | 'pnn' | 'holo' | 'quantum' | 'langevin' | 'opto' | 'inference';
+type TabId = LabId;
+
+/** Lab demandé par l'URL (`#lab=quantum`), s'il est valide. */
+function tabFromHash(): TabId | null {
+  const id = new URLSearchParams(window.location.hash.slice(1)).get('lab');
+  return id && TABS.some((t) => t.id === id) ? (id as TabId) : null;
+}
+
+/**
+ * Réécrit le hash pour le lab courant : `lab=<id>` + uniquement les clés que
+ * ce lab sait relire. Garde l'URL courte et partageable.
+ */
+function pruneHash(id: TabId) {
+  const allowed = HASH_KEYS_BY_LAB[id] ?? [];
+  const p = new URLSearchParams(window.location.hash.slice(1));
+  for (const k of [...p.keys()]) if (k !== 'lab' && !allowed.includes(k)) p.delete(k);
+  p.set('lab', id);
+  window.history.replaceState(null, '', `#${p.toString()}`);
+}
 
 const TABS: { id: TabId; label: string; glyph: string; blurb: string }[] = [
   { id: 'bpm', label: 'Moteur de lumière', glyph: '≈', blurb: 'BPM split-step Fourier — propagation réelle dans les guides' },
@@ -40,14 +61,46 @@ const TABS: { id: TabId; label: string; glyph: string; blurb: string }[] = [
 ];
 
 export default function App() {
-  const [tab, setTab] = useState<TabId>('bpm');
+  const [tab, setTab] = useState<TabId>(() => tabFromHash() ?? 'bpm');
   const [clock, setClock] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  // incrémenté par la galerie : force le remontage du lab pour qu'il relise le hash
+  const [labNonce, setLabNonce] = useState(0);
+  const [shared, setShared] = useState(false);
+
+  const goTab = (id: TabId) => {
+    setTab(id);
+    pruneHash(id);
+  };
+
+  const openPreset = (p: Preset) => {
+    window.history.replaceState(null, '', `#${presetHash(p)}`);
+    setTab(p.lab);
+    setLabNonce((n) => n + 1);
+    setGalleryOpen(false);
+    setPaletteOpen(false);
+  };
+
+  const share = () => {
+    void copyText(window.location.href);
+    setShared(true);
+    setTimeout(() => setShared(false), 1400);
+  };
 
   useEffect(() => {
     const id = setInterval(() => setClock((c) => c + 1), 1000);
     return () => clearInterval(id);
   }, []);
+
+  // l'onglet courant est toujours dans l'URL : un lien partagé rouvre le bon lab
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.hash.slice(1));
+    if (p.get('lab') !== tab) {
+      p.set('lab', tab);
+      window.history.replaceState(null, '', `#${p.toString()}`);
+    }
+  }, [tab]);
 
   // ---- raccourcis clavier : ⌘K palette · chiffres 1-9,0 → 10 premiers labs
   useEffect(() => {
@@ -57,15 +110,17 @@ export default function App() {
         setPaletteOpen((o) => !o);
         return;
       }
-      if (paletteOpen) return;
+      if (e.key === 'Escape') { setGalleryOpen(false); setPaletteOpen(false); return; }
+      if (e.key.toLowerCase() === 'g' && !galleryOpen) { setGalleryOpen(true); return; }
+      if (paletteOpen || galleryOpen) return;
       const tgt = e.target as HTMLElement | null;
       if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable)) return;
       const di = '1234567890'.indexOf(e.key);
-      if (di >= 0 && di < TABS.length) setTab(TABS[di].id);
+      if (di >= 0 && di < TABS.length) goTab(TABS[di].id);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [paletteOpen]);
+  }, [paletteOpen, galleryOpen]);
 
   return (
     <div className="min-h-screen bg-[#04060d] text-slate-200 antialiased">
@@ -130,9 +185,25 @@ export default function App() {
                 <span className="hidden md:inline">·</span>
                 <span className="hidden tabular-nums md:inline">t+{clock}s</span>
                 <button
+                  onClick={() => setGalleryOpen(true)}
+                  title="galerie d'exemples partageables (g)"
+                  className="ml-1 flex items-center gap-1 rounded bg-white/[0.04] px-1.5 py-0.5 font-mono text-[9px] text-slate-400 ring-1 ring-white/10 transition-all hover:bg-white/8 hover:text-slate-200"
+                >
+                  <span className="text-[10px]">◇</span>
+                  <span>galerie</span>
+                </button>
+                <button
+                  onClick={share}
+                  title="copier le lien de la scène courante"
+                  className="flex items-center gap-1 rounded bg-white/[0.04] px-1.5 py-0.5 font-mono text-[9px] text-slate-400 ring-1 ring-white/10 transition-all hover:bg-white/8 hover:text-slate-200"
+                >
+                  <span className="text-[10px]">⧉</span>
+                  <span>{shared ? 'copié' : 'partager'}</span>
+                </button>
+                <button
                   onClick={() => setPaletteOpen(true)}
                   title="palette de commandes (⌘K)"
-                  className="ml-1 hidden items-center gap-1 rounded bg-white/[0.04] px-1.5 py-0.5 font-mono text-[9px] text-slate-400 ring-1 ring-white/10 transition-all hover:bg-white/8 hover:text-slate-200 sm:flex"
+                  className="hidden items-center gap-1 rounded bg-white/[0.04] px-1.5 py-0.5 font-mono text-[9px] text-slate-400 ring-1 ring-white/10 transition-all hover:bg-white/8 hover:text-slate-200 sm:flex"
                 >
                   <span className="text-[10px]">⌘K</span>
                 </button>
@@ -144,7 +215,7 @@ export default function App() {
               {TABS.map((t) => (
                 <button
                   key={t.id}
-                  onClick={() => setTab(t.id)}
+                  onClick={() => goTab(t.id)}
                   title={t.blurb}
                   className={cn(
                     'group relative flex shrink-0 items-center gap-2 border-b-2 px-3 py-2.5 font-mono text-[10px] tracking-wide transition-all',
@@ -189,7 +260,7 @@ export default function App() {
             <p className="text-[10px] text-slate-500">{TABS.find((t) => t.id === tab)!.blurb}</p>
           </div>
 
-          <Suspense fallback={<Loading />}>
+          <Suspense key={labNonce} fallback={<Loading />}>
             {tab === 'bpm' && <BpmLab />}
             {tab === 'processor' && <ProcessorLab />}
             {tab === 'ising' && <IsingLab />}
@@ -213,9 +284,11 @@ export default function App() {
         {paletteOpen && (
           <CommandPalette
             onClose={() => setPaletteOpen(false)}
-            onSelect={(id) => { setTab(id); setPaletteOpen(false); }}
+            onSelect={(id) => { goTab(id); setPaletteOpen(false); }}
           />
         )}
+
+        <Gallery open={galleryOpen} onClose={() => setGalleryOpen(false)} onPick={openPreset} />
 
         {/* ---------------------------------------------------------- footer */}
         <footer className="mt-8 border-t border-white/6 bg-black/25">

@@ -170,3 +170,45 @@ gcc -O2 -march=native -ffast-math -fopenmp -o /tmp/lm_train  lm_c/lm_main.c     
 /tmp/lm_train --data ci-data/tinystories_ci.txt --steps 60 --gradcheck --nogen
 /tmp/lm_train --data DATA_V=104.txt --steps 500 --nogen && npm run assets:inference
 ```
+
+---
+
+## 7. Deuxième passe — les chantiers de la §5 (même jour)
+
+Tout ce qui suit a été fait, re-testé et poussé sur la branche de session.
+
+| Chantier | État | Preuve |
+|---|---|---|
+| CI → Pages automatique | ✅ `.github/workflows/pages.yml` : rebuild + commit de `docs/` à chaque push sur `master` (Pages reste en mode legacy `/docs`, aucun réglage de dépôt à changer) | `npm run docs:sync` + `docs:check` |
+| Démo reproductible / anti-dérive | ✅ `docs:check` échoue si `docs/` diverge des sources, et tourne en CI sur les PR | CI `test` job |
+| Galerie d'exemples partageables (issue #4) | ✅ 10 scènes, `src/gallery.ts` + `src/ui/Gallery.tsx`, raccourci `g` | `npm run smoke:dom` (ouverture, sélection, hash, deep-link) |
+| État dans l'URL | ✅ `useHashNumber` + `#lab=<id>` épinglé ; BPM, MZI, Ising, dispersion, quantique, holo exportent leurs paramètres | `#lab=quantum&qr=0.7` testé |
+| Nettoyage | ✅ 24 fichiers → `bench/`, 5 prototypes → `experiments/`, `experiment/` supprimé (sous-ensemble strict de `src/`), racine passée de 60 à 29 entrées | `ls` |
+| `npm audit` | ✅ **0 vulnérabilité** (vite 7.3.2 → 7.3.7, esbuild, source-map-js) | `npm audit` |
+| Tests UI | ✅ `npm run smoke:dom` — les 16 labs sont **montés et dessinés** (jsdom + canvas factice), plus galerie/partage/deep-link | 24 assertions PASS |
+| Fraîcheur des claims | ✅ `npm run claims` / `claims:write` → [`CLAIMS.md`](CLAIMS.md) avec CPU, OS, Node, gcc, date + provenance datée dans le README | CI publie le tableau dans le job summary |
+
+### Ce qui reste bloqué (et pourquoi)
+
+Les deux chantiers C restants — **quantification réelle** (stockage int8/int4) et **export wasm des
+kernels GEMM** — exigent de reconstruire `lm_infer.wasm`, donc une toolchain `wasm32-wasip1`
+(`wasi-sdk`) absente de cet environnement (pas de clang, et les releases GitHub ne sont pas
+téléchargeables ici : les assets redirigent vers `objects.githubusercontent.com`).
+
+Ils sont donc documentés comme spécifications exécutables, pas laissés en fumée :
+**issues [#17](https://github.com/bahira/lightemulator/issues/17)** (quantification réelle, avec la
+mesure de taille attendue 1,03 MiB → 264 KiB) et **[#18](https://github.com/bahira/lightemulator/issues/18)**
+(GEMM v128, avec le critère « ≥ 2× le débit actuel, parité max|diff| < 1e-5 »).
+
+### État final mesuré
+
+```
+tsc --noEmit .......... 0 erreur
+npm run test .......... 44/44 PASS (1,3 s)
+npm run smoke:labs .... 16/16 labs + shell
+npm run smoke:dom ..... 16/16 dessinés + 8 assertions UI (galerie, partage, deep-link)
+verify:inference ...... 13/13 PASS (assets, V, quantification effective)
+docs:check ............ docs/ à jour
+claims ................ exp8 AVX2 ×4,7–6,1 · exp scalaire ×1,00 · wasm 275 tok/s · gradcheck 0,0253
+npm audit ............. 0 vulnérabilité
+```

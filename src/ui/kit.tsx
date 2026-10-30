@@ -210,6 +210,24 @@ export function useHashParam(key: string, initial: string): [string, (v: string)
   return [val, setVal];
 }
 
+/**
+ * Variante numérique de `useHashParam` — à utiliser pour les paramètres
+ * principaux d'un lab (fréquence, angle, taille de grille…), afin qu'un lien
+ * partagé restaure exactement la même scène.
+ */
+export function useHashNumber(key: string, initial: number): [number, (v: number) => void] {
+  const [raw, setRaw] = useHashParam(key, String(initial));
+  const parsed = Number(raw);
+  const value = Number.isFinite(parsed) ? parsed : initial;
+  return [value, (v: number) => setRaw(String(Number(v.toFixed(6))))];
+}
+
+/** Lien absolu courant (hash inclus) — l'état des labs y est déjà persisté. */
+export function currentShareUrl(): string {
+  if (typeof window === 'undefined') return '';
+  return window.location.href;
+}
+
 // ---------------------------------------------------------------------------
 //  Canvas hook — handles devicePixelRatio + ResizeObserver
 // ---------------------------------------------------------------------------

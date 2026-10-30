@@ -5,7 +5,7 @@ import {
 } from '../physics/bpm';
 import {
   Panel, Stat, Slider, Segmented, Btn, Tag, Formula,
-  useCanvas, LUT, paintField, drawImageBuffer, drawGrid, drawSeries, axisLabel,
+  useCanvas, LUT, paintField, drawImageBuffer, drawGrid, drawSeries, axisLabel, useHashNumber,
 } from '../ui/kit';
 
 type ViewMode = 'intensity' | 'wave' | 'phase' | 'index';
@@ -16,10 +16,10 @@ export default function BpmLab() {
   const [device, setDevice] = useState<DeviceId>('coupler');
   const [view, setView] = useState<ViewMode>('intensity');
   const [animate, setAnimate] = useState(true);
-  const [lambda, setLambda] = useState(1.55);
-  const [dn, setDn] = useState(0.012);
+  const [lambda, setLambda] = useHashNumber('blam', 1.55);
+  const [dn, setDn] = useHashNumber('bdn', 0.012);
   const [wCore, setWCore] = useState(4);
-  const [gap, setGap] = useState(3);
+  const [gap, setGap] = useHashNumber('bgap', 3);
   const [Lz, setLz] = useState(3000);
   const [armPhase, setArmPhase] = useState(0);
   const [Nx, setNx] = useState(512);
