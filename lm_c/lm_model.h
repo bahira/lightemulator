@@ -582,6 +582,12 @@ static void mm_nt_t(float *Y, const float *X, const float *Wrow, const float *Wt
         QMat *Q = quantFind(Wtr, K, N);
         if (Q) {
             const double tp0 = g_prof ? profNow() : 0;
+#if defined(__wasm_simd128__) && !defined(LM_NO_WASM_SIMD)
+            if (Q->bits == 8) mm_nt_t_q8_wasm(Y, X, Q, b, M, K, N);
+            else              mm_nt_t_q4_wasm(Y, X, Q, b, M, K, N);
+            if (g_prof) g_tGemm += profNow() - tp0;
+            return;
+#endif
 #if defined(__x86_64__) || defined(_M_X64)
             if (cpuAvx2 < 0) cpuAvx2 = __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma");
             if (cpuAvx2 && g_qkern >= 2) {

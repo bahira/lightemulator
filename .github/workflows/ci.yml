@@ -40,6 +40,7 @@ jobs:
           fi
           python3 -m ziglang version
           npm run bench:wasm
+          npm run bench:wasm-quant
       - name: chaîne d'inférence wasm (assets + dimensions + quantification)
         run: npm run verify:inference
 

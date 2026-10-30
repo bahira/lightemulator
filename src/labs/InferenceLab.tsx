@@ -185,9 +185,9 @@ export default function InferenceLab() {
           </ul>
           <p className="text-amber-300 pt-1">✗ Limites (documentées)</p>
           <ul className="space-y-1 text-slate-500">
-            <li>· Le noyau int8/int4 dans wasm est encore <b>scalaire</b> : le mode INT8 coûte ~9× plus de temps qu'un FP32 (103 vs 900 tok/s) en gagnant ×3,9 de mémoire. Le gain de vitesse int8 existe côté x86 (×1,43 vs fp32 AVX2), pas encore côté wasm</li>
+            <li>· Le noyau int8/int4 dans wasm déquantifie par panneau de 16 colonnes : il tourne à ~0,65× le FP32 (620 vs 965 tok/s) tout en divisant la mémoire par 3,9 — le gain de vitesse int8 existe côté x86 (×1,43 vs fp32 AVX2), pas encore ici</li>
             <li>· E8 reste une <b>simulation de bruit</b> (poids réécrits en fp32 arrondi) : pas de format packé, donc aucun octet gagné dans ce mode</li>
-            <li>· Modèle char-level 270k / 500 steps sur 32 Ko — texte pseudo-cohérent, pas un LLM utile</li>
+            <li>· Modèle char-level 270k / 500 steps sur 32 Ko — texte pseudo-cohérent, pas un LLM utile. Mesuré : 1 200 et 2 500 steps sur ce même corpus ne font pas mieux (val 3,07, échantillons bruités) — c'est le corpus qui plafonne, pas le kernel</li>
           </ul>
         </div>
       </Panel>

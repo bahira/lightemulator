@@ -291,6 +291,134 @@ static void mm_nt_t_q8_vnni(float *Y, const float *X, const QMat *Q, const float
 #endif /* x86 */
 
 
+/* ------------------------------------- int8 packé en wasm SIMD128 (A8W8) ----
+ * Le noyau scalaire coûtait ~9x le FP32 dans le navigateur. Ici on garde le
+ * calcul vectoriel : par panneau de 16 colonnes, on DÉQUANTIFIE les poids une
+ * fois (K x 16 flottants, réutilisés sur toutes les lignes M, donc amorti), les
+ * activations sont déquantifiées une fois par ligne, et la boucle interne reste
+ * le GEMM v128 à 4 lignes M. Les octets stockés restent ceux du pack int8 :
+ * la déquantification vit dans une tuile temporaire, jamais dans une copie
+ * persistante des poids.
+ */
+#if defined(__wasm_simd128__) && !defined(LM_NO_WASM_SIMD)
+#include <wasm_simd128.h>
+static void mm_nt_t_q8_wasm(float *Y, const float *X, const QMat *Q, const float *b,
+                            int M, int K, int N) {
+    const int N16 = N & ~15;
+    uint8_t *xq = (uint8_t *)malloc((size_t)K);
+    /* activations déquantifiées UNE fois par ligne (et non par panneau) */
+    float *xa = (float *)malloc(sizeof(float) * (size_t)M * K);
+    for (int m = 0; m < M; m++) {
+        const float sx = qActRow(X + (size_t)m * K, K, xq);
+        float *d = xa + (size_t)m * K;
+        for (int k = 0; k < K; k++) d[k] = (float)((int)xq[k] - 64) * sx;
+    }
+    float *wp = (float *)malloc(sizeof(float) * 16 * (size_t)K);
+
+    for (int nb = 0; nb + 16 <= N16; nb += 16) {
+        /* déquantification du panneau de 16 colonnes, réutilisée sur toutes les lignes */
+        for (int k = 0; k < K; k++) {
+            const uint8_t *src = Q->q + ((size_t)(k >> 2) * N + nb) * 4;
+            const int kk = k & 3;
+            float *row = wp + (size_t)k * 16;
+            for (int c = 0; c < 16; c++) row[c] = (float)(int8_t)src[c * 4 + kk] * Q->s[nb + c];
+        }
+        v128_t bb[4];
+        for (int c = 0; c < 4; c++)
+            bb[c] = b ? wasm_v128_load(b + nb + 4 * c) : wasm_f32x4_splat(0.0f);
+
+        for (int mb = 0; mb + 4 <= M; mb += 4) {
+            const float *xa0 = xa + (size_t)(mb + 0) * K, *xa1 = xa + (size_t)(mb + 1) * K;
+            const float *xa2 = xa + (size_t)(mb + 2) * K, *xa3 = xa + (size_t)(mb + 3) * K;
+            v128_t a[4][4];
+            for (int c = 0; c < 4; c++) { a[0][c] = bb[c]; a[1][c] = bb[c]; a[2][c] = bb[c]; a[3][c] = bb[c]; }
+            for (int k = 0; k < K; k++) {
+                const float *w = wp + (size_t)k * 16;
+                const v128_t w0 = wasm_v128_load(w), w1 = wasm_v128_load(w + 4);
+                const v128_t w2 = wasm_v128_load(w + 8), w3 = wasm_v128_load(w + 12);
+                const v128_t v0 = wasm_f32x4_splat(xa0[k]), v1 = wasm_f32x4_splat(xa1[k]);
+                const v128_t v2 = wasm_f32x4_splat(xa2[k]), v3 = wasm_f32x4_splat(xa3[k]);
+                a[0][0] = wasm_f32x4_add(a[0][0], wasm_f32x4_mul(v0, w0));
+                a[0][1] = wasm_f32x4_add(a[0][1], wasm_f32x4_mul(v0, w1));
+                a[0][2] = wasm_f32x4_add(a[0][2], wasm_f32x4_mul(v0, w2));
+                a[0][3] = wasm_f32x4_add(a[0][3], wasm_f32x4_mul(v0, w3));
+                a[1][0] = wasm_f32x4_add(a[1][0], wasm_f32x4_mul(v1, w0));
+                a[1][1] = wasm_f32x4_add(a[1][1], wasm_f32x4_mul(v1, w1));
+                a[1][2] = wasm_f32x4_add(a[1][2], wasm_f32x4_mul(v1, w2));
+                a[1][3] = wasm_f32x4_add(a[1][3], wasm_f32x4_mul(v1, w3));
+                a[2][0] = wasm_f32x4_add(a[2][0], wasm_f32x4_mul(v2, w0));
+                a[2][1] = wasm_f32x4_add(a[2][1], wasm_f32x4_mul(v2, w1));
+                a[2][2] = wasm_f32x4_add(a[2][2], wasm_f32x4_mul(v2, w2));
+                a[2][3] = wasm_f32x4_add(a[2][3], wasm_f32x4_mul(v2, w3));
+                a[3][0] = wasm_f32x4_add(a[3][0], wasm_f32x4_mul(v3, w0));
+                a[3][1] = wasm_f32x4_add(a[3][1], wasm_f32x4_mul(v3, w1));
+                a[3][2] = wasm_f32x4_add(a[3][2], wasm_f32x4_mul(v3, w2));
+                a[3][3] = wasm_f32x4_add(a[3][3], wasm_f32x4_mul(v3, w3));
+            }
+            for (int r = 0; r < 4; r++) {
+                float *y = Y + (size_t)(mb + r) * N + nb;
+                wasm_v128_store(y, a[r][0]); wasm_v128_store(y + 4, a[r][1]);
+                wasm_v128_store(y + 8, a[r][2]); wasm_v128_store(y + 12, a[r][3]);
+            }
+        }
+        for (int m = (M & ~3); m < M; m++) { /* lignes M % 4 : scalaire */
+            const float *xm = xa + (size_t)m * K;
+            float *y = Y + (size_t)m * N;
+            for (int n = nb; n < nb + 16; n++) {
+                float acc = 0.f;
+                for (int k = 0; k < K; k++)
+                    acc += xm[k] * (float)(int8_t)Q->q[(size_t)(k >> 2) * N * 4 + (size_t)n * 4 + (k & 3)] * Q->s[n];
+                y[n] = acc + (b ? b[n] : 0.f);
+            }
+        }
+    }
+    /* palier 8 colonnes (N % 16 == 8 sur toutes les formes du modèle : 72, 104, 216) */
+    for (int nb = N16; nb + 8 <= (N & ~7); nb += 8) {
+        for (int k = 0; k < K; k++) {
+            const uint8_t *src = Q->q + ((size_t)(k >> 2) * N + nb) * 4;
+            const int kk = k & 3;
+            float *row = wp + (size_t)k * 16;
+            for (int c = 0; c < 8; c++) row[c] = (float)(int8_t)src[c * 4 + kk] * Q->s[nb + c];
+        }
+        v128_t bb0 = b ? wasm_v128_load(b + nb) : wasm_f32x4_splat(0.0f);
+        v128_t bb1 = b ? wasm_v128_load(b + nb + 4) : wasm_f32x4_splat(0.0f);
+        for (int mb = 0; mb + 4 <= M; mb += 4) {
+            const float *xa0 = xa + (size_t)(mb + 0) * K, *xa1 = xa + (size_t)(mb + 1) * K;
+            const float *xa2 = xa + (size_t)(mb + 2) * K, *xa3 = xa + (size_t)(mb + 3) * K;
+            v128_t a0 = bb0, a1 = bb1, b0 = bb0, b1 = bb1, c0 = bb0, c1 = bb1, d0 = bb0, d1 = bb1;
+            for (int k = 0; k < K; k++) {
+                const float *w = wp + (size_t)k * 16;
+                const v128_t w0 = wasm_v128_load(w), w1 = wasm_v128_load(w + 4);
+                const v128_t v0 = wasm_f32x4_splat(xa0[k]), v1 = wasm_f32x4_splat(xa1[k]);
+                const v128_t v2 = wasm_f32x4_splat(xa2[k]), v3 = wasm_f32x4_splat(xa3[k]);
+                a0 = wasm_f32x4_add(a0, wasm_f32x4_mul(v0, w0)); a1 = wasm_f32x4_add(a1, wasm_f32x4_mul(v0, w1));
+                b0 = wasm_f32x4_add(b0, wasm_f32x4_mul(v1, w0)); b1 = wasm_f32x4_add(b1, wasm_f32x4_mul(v1, w1));
+                c0 = wasm_f32x4_add(c0, wasm_f32x4_mul(v2, w0)); c1 = wasm_f32x4_add(c1, wasm_f32x4_mul(v2, w1));
+                d0 = wasm_f32x4_add(d0, wasm_f32x4_mul(v3, w0)); d1 = wasm_f32x4_add(d1, wasm_f32x4_mul(v3, w1));
+            }
+            float *y0 = Y + (size_t)(mb + 0) * N + nb, *y1 = Y + (size_t)(mb + 1) * N + nb;
+            float *y2 = Y + (size_t)(mb + 2) * N + nb, *y3 = Y + (size_t)(mb + 3) * N + nb;
+            wasm_v128_store(y0, a0); wasm_v128_store(y0 + 4, a1);
+            wasm_v128_store(y1, b0); wasm_v128_store(y1 + 4, b1);
+            wasm_v128_store(y2, c0); wasm_v128_store(y2 + 4, c1);
+            wasm_v128_store(y3, d0); wasm_v128_store(y3 + 4, d1);
+        }
+    }
+    /* colonnes N % 16 : scalaire */
+    for (int m = 0; m < M; m++) {
+        const float *xm = xa + (size_t)m * K;
+        float *y = Y + (size_t)m * N;
+        for (int n = (N & ~7); n < N; n++) {
+            float acc = 0.f;
+            for (int k = 0; k < K; k++)
+                acc += xm[k] * (float)(int8_t)Q->q[(size_t)(k >> 2) * N * 4 + (size_t)n * 4 + (k & 3)] * Q->s[n];
+            y[n] = acc + (b ? b[n] : 0.f);
+        }
+    }
+    free(xq); free(xa); free(wp);
+}
+#endif /* __wasm_simd128__ */
+
 /* int4 → int8 : expansion unique (mise en cache dans Q->q8). Le stockage reste
  * 4 bits par poids ; l'expansion est un dépaquetage one-shot, comme un moteur qui
  * garde les poids quantifiés sur disque et les déplie à la première évaluation. */
@@ -322,6 +450,16 @@ static void mm_nt_t_q4_avx2(float *Y, const float *X, const QMat *Q, const float
     mm_nt_t_q8_avx2(Y, X, &V, b, M, K, N);
 }
 
+#endif
+
+#if defined(__wasm_simd128__) && !defined(LM_NO_WASM_SIMD)
+static void mm_nt_t_q4_wasm(float *Y, const float *X, const QMat *Q, const float *b,
+                            int M, int K, int N) {
+    if (K & 1) { mm_nt_t_q4_scalar(Y, X, Q, b, M, K, N); return; }
+    qMatEnsureInt8(Q);
+    QMat V = *Q; V.bits = 8; V.q = Q->q8; V.q8 = NULL;
+    mm_nt_t_q8_wasm(Y, X, &V, b, M, K, N);
+}
 #endif
 
 #endif /* LM_QUANT_H */

@@ -2,6 +2,28 @@
 
 Toutes les modifications notables de ce projet. Format basé sur [Keep a Changelog](https://keepachangelog.com/), semver.
 
+## [1.3.1] — 2026-10-30
+
+### Ajouté — int8/int4 vectorisés dans le navigateur
+- `mm_nt_t_q8_wasm` : déquantification **par panneau de 16 colonnes**, réutilisée sur toutes les
+  lignes M (amortie ~1/64), activations déquantifiées une fois par ligne, puis GEMM v128 à
+  4 lignes M — même structure que le noyau FP32. Palier 8 colonnes pour les formes du modèle
+  (N = 72 / 104 / 216, dont le reste 8 tombait auparavant en scalaire).
+- Mesuré (`npm run bench:wasm-quant`, 5 rondes appariées, glouton) : FP32 965 tok/s ·
+  **INT8 623–682 (×0.65–0.70)** · **INT4 680–695 (×0.70–0.71)**, poids 1 055 → 271 → 146 KiB, sorties identiques.
+  Avant cette passe, le mode INT8 tournait à **103 tok/s (×0.11)** : c'est ×6.
+- `tools/bench_wasm_quant.mjs` : mesure FP32/INT8/INT4 dans le même module, échoue si un mode
+  quantifié passe sous 0,4× le FP32. Branché en CI avec `bench:wasm`.
+
+### Limite mesurée (et non contournée)
+- Le checkpoint livré n'est **pas reproductible depuis le corpus du dépôt** : le corpus de
+  `ci-data/` donne V=59, le checkpoint livré a V=104 (val 2.98 contre 3.07 pour V=59).
+- Plus d'entraînement ne corrige pas le texte : 1 200 puis 2 500 steps sur ces 32 Ko laissent
+  la val loss à ~3,07 et l'échantillon bruité. Le plafond est le **corpus**, pas le noyau —
+  c'est écrit dans le lab plutôt que masqué par un meilleur décodage.
+
+[1.3.1]: https://github.com/bahira/lightemulator/releases/tag/v1.3.1
+
 ## [1.3.0] — 2026-10-30
 
 Deux blocages levés, et ils étaient réels.
