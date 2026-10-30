@@ -74,7 +74,9 @@ const V = dv.getInt32(0, true);
 check(V === vocab.length, 'V du checkpoint == |vocab|', `V=${V}`);
 check(4 + nParams * 4 === ck.length, 'taille du checkpoint', `${ck.length} octets`);
 
-const mem = new Float32Array(ex.memory.buffer, arena, nParams);
+let mem = new Float32Array(ex.memory.buffer, arena, nParams);
+// le packing int8/int4 alloue dans la mémoire wasm → le buffer peut être détaché
+const refreshMem = () => { mem = new Float32Array(ex.memory.buffer, arena, nParams); };
 for (let i = 0; i < nParams; i++) mem[i] = dv.getFloat32(4 + i * 4, true);
 const pristine = new Float32Array(mem);
 ex.wasm_refresh();
@@ -84,7 +86,10 @@ const l2 = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) { const d =
 const base = l2(pristine, new Float32Array(pristine.length)) || 1;
 
 const outs = [];
+const memBytes = {};
+const fp32Bytes = ex.wasm_mem_weights();
 for (const [mode, label] of [[0, 'FP32'], [1, 'E8'], [2, 'INT8'], [3, 'INT4']]) {
+  refreshMem();
   mem.set(pristine);
   if (mode) ex.wasm_quant(mode);
   else ex.wasm_refresh();
@@ -98,11 +103,40 @@ for (const [mode, label] of [[0, 'FP32'], [1, 'E8'], [2, 'INT8'], [3, 'INT4']]) 
   const ms = performance.now() - t0;
   const txt = new TextDecoder('latin1').decode(new Uint8Array(ex.memory.buffer, ex.wasm_out(), n));
   outs.push(txt);
-  check(n > 0, `génération ${label}`, `${n} tokens · ${(n / ms * 1000).toFixed(0)} tok/s · ‖Δw‖ ${(rel * 100).toFixed(2)} %`);
-  if (mode) check(rel > 1e-4, `  quantification ${label} effective`, `‖Δw‖/‖w‖ = ${(rel * 100).toFixed(2)} %`);
+  const bytes = ex.wasm_mem_weights();
+  memBytes[label] = bytes;
+  const kib = (b) => `${(b / 1024).toFixed(1)} KiB`;
+  const ratio = mode >= 2 ? ` · poids ${kib(bytes)} (×${(fp32Bytes / bytes).toFixed(2)} plus petit)` : '';
+  check(n > 0, `génération ${label}`, `${n} tokens · ${(n / ms * 1000).toFixed(0)} tok/s · ‖Δw‖ ${(rel * 100).toFixed(2)} %${ratio}`);
+  if (mode === 1) check(rel > 1e-4, `  quantification ${label} effective`, `‖Δw‖/‖w‖ = ${(rel * 100).toFixed(2)} %`);
+  if (mode >= 2) {
+    // int8/int4 sont PACKÉS : on vérifie que le gain mémoire est bien réel
+    const got = fp32Bytes / bytes;
+    check(got > (mode === 2 ? 3.0 : 6.0), `  ${label} packé (mémoire réelle)`,
+          `${kib(fp32Bytes)} fp32 → ${kib(bytes)} · ×${got.toFixed(2)} · ${bytes} octets`);
+  }
 }
 check(outs[0] !== outs[3], 'INT4 change la sortie vs FP32', outs[0] !== outs[3] ? '(divergence attendue)' : '(identique — suspect)');
 
+/* Parité de sortie en décodage glouton (T=0) : même seed, même prompt. En
+   échantillonnage (T=0.8) les logits arrondis modifient le tirage dès le premier
+   token, ce qui ne dit rien de la fidélité ; en glouton c'est déterministe. */
+const common = (a, b) => { let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; return i; };
+const greedy = (mode) => {
+  refreshMem(); mem.set(pristine);
+  if (mode) ex.wasm_quant(mode); else ex.wasm_refresh();
+  const scr = new Uint8Array(ex.memory.buffer, ex.wasm_scratch(), 1024);
+  for (let i = 0; i < 11; i++) scr[128 + i] = 'Once upon a'.charCodeAt(i);
+  ex.wasm_seed(42n);
+  const n = ex.wasm_gen(ex.wasm_scratch() + 128, 11, 120, 0.0);
+  return new TextDecoder('latin1').decode(new Uint8Array(ex.memory.buffer, ex.wasm_out(), n));
+};
+const g0 = greedy(0), g8 = greedy(2), g4 = greedy(3);
+const p8 = common(g0, g8), p4 = common(g0, g4);
+check(p8 >= 24, 'INT8 : parité gloutonne avec FP32', `${p8} caractères identiques sur ${g0.length} (T=0, seed 42)`);
+check(p4 >= 24, 'INT4 : parité gloutonne avec FP32', `${p4} caractères identiques sur ${g0.length} (T=0, seed 42)`);
+
+refreshMem();
 mem.set(pristine);
 ex.wasm_refresh();
 

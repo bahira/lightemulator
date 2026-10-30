@@ -2,6 +2,47 @@
 
 Toutes les modifications notables de ce projet. Format basé sur [Keep a Changelog](https://keepachangelog.com/), semver.
 
+## [1.3.0] — 2026-10-30
+
+Deux blocages levés, et ils étaient réels.
+
+### Ajouté — toolchain wasm reproductible
+- `tools/build_wasm.mjs` + `tools/wasm_harness.mjs` : reconstruisent `public/lm_infer.wasm`
+  depuis `lm_c/lm_wasm.c` avec le premier compilateur disponible (`$ZIG_CC`, `zig`,
+  `python -m ziglang`, `emcc`, `clang`). `pip install ziglang` suffit — plus besoin de wasi-sdk.
+  Le script refuse d’écrire si la génération gloutonne change, et affiche le rapport avec le module publié.
+- `bench:wasm` mesure le module à trois étages (scalaire / v128 1 ligne / v128 4 lignes).
+
+### Ajouté — GEMM v128 bloqué dans le navigateur
+- `mm_nt_t_wasm_mb4` : 4 lignes M × tuiles de 16 colonnes (4 v128 d’accumulateurs), plus tuiles
+  8 et 4 et restes scalaires. Débit **205 → 970 tok/s (×4.5, 15–26σ sur 3 sessions)**, sorties glouton identiques.
+  Attribution mesurée : ×3.4 par la largeur v128, ×1.4 par le blocage 4 lignes.
+- La variable `mm_nt_t_wasm_1row` (`-DLM_WASM_1ROW`) existe pour refaire l’attribution.
+
+### Ajouté — quantification réelle int8 / int4 (issue #17)
+- `lm_c/lm_quant.h` : poids packés (1 octet/poids, 2 poids/octet), échelle par colonne,
+  somme de colonne pour corriger le point zéro 64 des activations, et GEMM qui multiplie des
+  entiers : `maddubs` (AVX2), `dpbusd` (AVX-512 VNNI), scalaire ailleurs. Déquantification à
+  l’accumulation, jamais de copie fp32.
+- Modèle : `--quant-int8` / `--quant-int4` évaluent le vrai chemin packé — val loss
+  **3.567 → 3.564 / 3.563**, poids **989 KiB → 268 KiB (×3.69) / 144 KiB (×6.85)**.
+- wasm : `wasm_quant(2|3)` bascule sur les poids packés, `wasm_mem_weights()` expose les octets
+  réellement occupés, le lab affiche « poids 271 KiB » à côté du débit, `verify:inference`
+  vérifie les ratios (×3.89 / ×7.21) et la parité gloutonne avec FP32 (120/120 caractères).
+- `bench/bench_quant.c` : fp32 vs int8/int4 (scalaire, AVX2, VNNI) sur les 5 formes réelles.
+
+### Mesuré / corrigé
+- **AVX-512 VNNI est une régression sur ce Xeon** (×0.63 vs fp32, ×0.44 vs int8 AVX2) :
+  downclock 512 bits + latence `dpbusd`. Le dispatch du modèle utilise le noyau AVX2.
+- **Le noyau int8/int4 dans wasm reste scalaire** : le mode INT8 y coûte ~9× le temps d’un FP32
+  (103 vs 900 tok/s) en gagnant ×3.9 de mémoire — dit tel quel dans le lab.
+- `lm_c/lm_model.h` : les noyaux `*_mb4` AVX2/AVX-512 étaient **hors** du `#if __x86_64__` —
+  wasm et ARM ne compilaient pas. Corrigé (c’est ce qui bloquait la reconstruction).
+- `verify:inference` : vues `Float32Array` recréées après `wasm_quant` (le packing alloue et
+  détache le buffer).
+
+[1.3.0]: https://github.com/bahira/lightemulator/releases/tag/v1.3.0
+
 ## [1.2.0] — 2026-10-30
 
 Perf, mesurée et falsifiable. Aucune régression de justesse : autotest GEMM `max|diff| = 0`,

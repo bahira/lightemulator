@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Panel, Tag, Btn, Formula } from '../ui/kit';
+import { Panel, Tag, Btn } from '../ui/kit';
 
 type Mode = 0 | 1 | 2 | 3; // 0=FP32, 1=E8, 2=INT8, 3=INT4
 interface Run {
-  mode: Mode; text: string; tokPerS: number; quantErr: string; ms: number;
+  mode: Mode; text: string; tokPerS: number; quantErr: string; ms: number; bytes: number;
 }
 
-const MODE_LABEL: Record<Mode, string> = { 0: 'FP32', 1: 'E8 (~7.1 bits)', 2: 'INT8 bloc', 3: 'INT4 bloc' };
+const MODE_LABEL: Record<Mode, string> = { 0: 'FP32', 1: 'E8 (~7.1 bits, simulé)', 2: 'INT8 packé', 3: 'INT4 packé' };
 
 export default function InferenceLab() {
   const [status, setStatus] = useState('chargement du module…');
@@ -115,8 +115,10 @@ export default function InferenceLab() {
       const nGen = Ee.wasm_gen(Ee.wasm_scratch() + 128, p.length, 200, 0.8);
       const ms = performance.now() - t0;
       const text = new TextDecoder('latin1').decode(new Uint8Array(Ee.memory.buffer, Ee.wasm_out(), nGen));
+      // octets réellement occupés par les poids : packés si INT8/INT4, arène fp32 sinon
+      const bytes = Ee.wasm_mem_weights ? Ee.wasm_mem_weights() : 0;
       // l'erreur de quantification est imprimée sur stdout (wasi), pas captée ici
-      setRuns((r) => [{ mode, text, tokPerS: nGen / ms * 1000, quantErr: mode === 0 ? '—' : 'voir note', ms }, ...r].slice(0, 4));
+      setRuns((r) => [{ mode, text, tokPerS: nGen / ms * 1000, quantErr: mode === 0 ? '—' : 'voir note', ms, bytes }, ...r].slice(0, 4));
       setBusy(null);
     }, 20);
   };
@@ -153,7 +155,10 @@ export default function InferenceLab() {
                   <div key={i} className="rounded-lg bg-slate-900/50 p-2.5 ring-1 ring-slate-800">
                     <div className="mb-1 flex items-center gap-2">
                       <Tag tone={r.mode === 0 ? 'cyan' : r.mode === 3 ? 'violet' : 'green'}>{MODE_LABEL[r.mode]}</Tag>
-                      <span className="text-[10px] text-slate-500">{r.tokPerS.toFixed(0)} tok/s · {r.ms.toFixed(0)} ms · seed 42 (apparié)</span>
+                      <span className="text-[10px] text-slate-500">
+                        {r.tokPerS.toFixed(0)} tok/s · {r.ms.toFixed(0)} ms
+                        {r.bytes > 0 ? ` · poids ${(r.bytes / 1024).toFixed(0)} KiB` : ''} · seed 42 (apparié)
+                      </span>
                     </div>
                     <p className="whitespace-pre-wrap break-all font-mono text-[10px] leading-relaxed text-slate-400">{r.text || '(aucun token généré)'}</p>
                   </div>
@@ -174,13 +179,14 @@ export default function InferenceLab() {
           <ul className="space-y-1 text-slate-500">
             <li>· Le <b>vrai module C</b> (trainer 270k params) compilé wasm32-wasip1 — 47.6 kB stripped, inference seule</li>
             <li>· Checkpoint réel livré : 500 steps sur l'échantillon 32 Ko du dépôt (V=104), val loss 2.98 (hasard 4.64) — le modèle a appris</li>
-            <li>· 4 modes de quantification (FP32/E8/INT8/INT4) — même seed = comparaison appariée, restauration FP32 avant chaque mode (jamais en cascade)</li>
-            <li>· ~230 tok/s mesurés (wasm SIMD v128, hors navigateur) — offline, private, zéro serveur</li>
+            <li>· 4 modes de quantification — même seed = comparaison appariée, restauration FP32 avant chaque mode (jamais en cascade)</li>
+            <li>· <b>INT8/INT4 packés</b> : les poids matriciels sont compactés (1 octet / 2 poids par octet, échelle par colonne) et le GEMM multiplie des entiers — la mémoire affichée ci-dessus est celle des octets réellement occupés (1 055 → 271 → 146 KiB)</li>
+            <li>· ~970 tok/s mesurés en FP32 (GEMM v128 bloqué 4 lignes, hors navigateur) — offline, private, zéro serveur</li>
           </ul>
           <p className="text-amber-300 pt-1">✗ Limites (documentées)</p>
           <ul className="space-y-1 text-slate-500">
-            <li>· GEMM auto-vectorisé ×1.25 seulement (le chemin scalaire a un accès W stridé) — l'upgrade est un <Formula>kernel v128 manuel sur W transposé</Formula> (les tuiles 4-acc se vectorisent 1:1, ×2-3 probable)</li>
-            <li>· La quantification est <b>simulée</b> : les poids restent fp32 en mémoire — même coût compute, la claim est qualité-par-bit (erreur RMS 6,0 % INT4 mesurée), pas la taille mémoire</li>
+            <li>· Le noyau int8/int4 dans wasm est encore <b>scalaire</b> : le mode INT8 coûte ~9× plus de temps qu'un FP32 (103 vs 900 tok/s) en gagnant ×3,9 de mémoire. Le gain de vitesse int8 existe côté x86 (×1,43 vs fp32 AVX2), pas encore côté wasm</li>
+            <li>· E8 reste une <b>simulation de bruit</b> (poids réécrits en fp32 arrondi) : pas de format packé, donc aucun octet gagné dans ce mode</li>
             <li>· Modèle char-level 270k / 500 steps sur 32 Ko — texte pseudo-cohérent, pas un LLM utile</li>
           </ul>
         </div>

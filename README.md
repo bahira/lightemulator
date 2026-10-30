@@ -33,6 +33,9 @@ A hand-tuned GPT written from scratch in pure C, with AVX2 kernels faster than l
 | **GEMM 4 lignes M + AVX-512** (4M×64) | **×1.71–2.37 vs 4×8** · ×38.5 vs scalaire | bit-identique |
 | **Backward bloqué** (`mm_dxd`, `mm_tndw`, 4 lignes/colonnes) | GEMM end-to-end **×1.44** vs avant (6.9σ) | auto-test max\|diff\| = 0 · gradcheck PASS |
 | **Débit d'entraînement** (60 steps, 5 rondes appariées) | **×1.28** (11,8–14,6 k → 15,6–19,1 k tok/s), 5.0σ | loss identique à 3 décimales |
+| **Inférence wasm (v128 + 4 lignes M)** | **×4.5** tok/s vs le module publié en scalaire (205 → 970 tok/s, 15–26σ) | sorties glouton **identiques** |
+| **Quantification int8 packée** (`lm_c/lm_quant.h`) | poids **×3.69** plus petits ; GEMM int8 **×1.43** vs fp32 AVX2 | val loss 3.567 → 3.564 · erreur GEMM 0,94 % |
+| **Quantification int4 packée** | poids **×6.85** plus petits (989 → 144 KiB) | val loss 3.567 → 3.563 · erreur GEMM 7,65 % |
 | GEMM end-to-end (fwd + bwd multi-acc) | **~×3** on GEMM wall time | gradcheck PASS (0.4% worst) |
 | `exp` — Padé-refined polynomial + ldexp | **×2.35** vs libm | L∞ 1.5e-5 on [−14, +2] |
 | `tanh` — rational form | **×5.3** vs libm | L∞ 9e-3 |

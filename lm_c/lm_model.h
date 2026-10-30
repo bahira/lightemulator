@@ -3,6 +3,7 @@
  * Unit?? de traduction unique incluse par lm_main.c.
  * =========================================================================== */
 #ifndef LM_MODEL_H
+#include "lm_quant.h"
 #define LM_MODEL_H
 
 #include <stdlib.h>
@@ -233,6 +234,7 @@ static void mm_nt_t_avx2(float *Y, const float *X, const float *Wtr, const float
  *   AVX2   4M x 16 : x1.8 vs 4x8       AVX-512 4M x 64 : x2.2 vs 4x8
  * Resultats bit-identiques au chemin scalaire (meme ordre d'accumulation en k).
  */
+#if defined(__x86_64__) || defined(_M_X64)
 __attribute__((target("avx2,fma")))
 static void mm_nt_t_avx2_mb4(float *Y, const float *X, const float *Wtr, const float *b,
                              int M, int K, int N) {
@@ -372,8 +374,241 @@ static void mm_nt_t_avx512_mb4(float *Y, const float *X, const float *Wtr, const
     const int mtail = mblk << 2;
     if (mtail < M) mm_nt_t_avx2(Y + (size_t)mtail * N, X + (size_t)mtail * K, Wtr, b, M - mtail, K, N);
 }
+#endif /* __x86_64__ — noyaux mb4 forward (wasm : chemin v128, ARM : scalaire) */
+
+/* ------------------------------------------- GEMM 4 lignes M — wasm SIMD128
+ * Même raisonnement que le noyau x86 : le noyau 1-ligne relit W une fois par
+ * ligne M de sortie (62-83 kB de W par appel sur les formes du modèle) ; traiter
+ * 4 lignes M par tuile divise ce trafic par 4. v128 = 4 float, donc 4 v128 par
+ * rangée de 16 colonnes, 4 rangées → 16 accumulateurs, chacun accumulé en k
+ * comme le chemin scalaire (pas de FMA : deux arrondis, ordre préservé).
+ * Tuiles 16 / 8 / 4 colonnes puis reste scalaire ; M % 4 scalaire.
+ */
+#if defined(__wasm_simd128__) && !defined(LM_NO_WASM_SIMD)
+#include <wasm_simd128.h>
+
+/* --------------------------------------- variante 1 ligne (témoin de blocage)
+ * Même nombre de voies (v128) mais une seule ligne M par passe : sert à
+ * attribuer le gain entre « largeur SIMD » et « blocage 4 lignes ».
+ * Compilée seulement si LM_WASM_1ROW est défini. */
+#if defined(__wasm_simd128__) && defined(LM_WASM_1ROW) && !defined(LM_NO_WASM_SIMD)
+static void mm_nt_t_wasm_1row(float *Y, const float *X, const float *Wtr, const float *b,
+                              int M, int K, int N) {
+    const int N8 = N & ~7, N4 = N & ~3;
+    for (int m = 0; m < M; m++) {
+        const float *x = X + (size_t)m * K;
+        float *y = Y + (size_t)m * N;
+        int nb = 0;
+        for (; nb + 8 <= N8; nb += 8) {
+            v128_t a0 = b ? wasm_v128_load(b + nb) : wasm_f32x4_splat(0.0f);
+            v128_t a1 = b ? wasm_v128_load(b + nb + 4) : wasm_f32x4_splat(0.0f);
+            for (int k = 0; k < K; k++) {
+                const float *w = Wtr + (size_t)k * N + nb;
+                const v128_t v = wasm_f32x4_splat(x[k]);
+                a0 = wasm_f32x4_add(a0, wasm_f32x4_mul(v, wasm_v128_load(w)));
+                a1 = wasm_f32x4_add(a1, wasm_f32x4_mul(v, wasm_v128_load(w + 4)));
+            }
+            wasm_v128_store(y + nb, a0); wasm_v128_store(y + nb + 4, a1);
+        }
+        for (; nb + 4 <= N4; nb += 4) {
+            v128_t a0 = b ? wasm_v128_load(b + nb) : wasm_f32x4_splat(0.0f);
+            for (int k = 0; k < K; k++) {
+                const v128_t w = wasm_v128_load(Wtr + (size_t)k * N + nb);
+                a0 = wasm_f32x4_add(a0, wasm_f32x4_mul(wasm_f32x4_splat(x[k]), w));
+            }
+            wasm_v128_store(y + nb, a0);
+        }
+        for (; nb < N; nb++) {
+            float s = b ? b[nb] : 0.f;
+            for (int k = 0; k < K; k++) s += x[k] * Wtr[(size_t)k * N + nb];
+            y[nb] = s;
+        }
+    }
+}
+#endif
+
+static void mm_nt_t_wasm_mb4(float *Y, const float *X, const float *Wtr, const float *b,
+                             int M, int K, int N) {
+    const int N16 = N & ~15, N8 = N & ~7, N4 = N & ~3;
+    const int mblk = M >> 2;
+    for (int mb = 0; mb < mblk; mb++) {
+        const int m = mb << 2;
+        const float *x0 = X + (size_t)(m + 0) * K, *x1 = X + (size_t)(m + 1) * K;
+        const float *x2 = X + (size_t)(m + 2) * K, *x3 = X + (size_t)(m + 3) * K;
+        float *y0 = Y + (size_t)(m + 0) * N, *y1 = Y + (size_t)(m + 1) * N;
+        float *y2 = Y + (size_t)(m + 2) * N, *y3 = Y + (size_t)(m + 3) * N;
+        int nb = 0;
+
+        for (; nb + 16 <= N16; nb += 16) {
+            v128_t a[4][4];
+            for (int c = 0; c < 4; c++) {
+                const v128_t init = b ? wasm_v128_load(b + nb + 4 * c) : wasm_f32x4_splat(0.0f);
+                a[0][c] = init; a[1][c] = init; a[2][c] = init; a[3][c] = init;
+            }
+            for (int k = 0; k < K; k++) {
+                const float *w = Wtr + (size_t)k * N + nb;
+                const v128_t w0 = wasm_v128_load(w), w1 = wasm_v128_load(w + 4);
+                const v128_t w2 = wasm_v128_load(w + 8), w3 = wasm_v128_load(w + 12);
+                const v128_t v0 = wasm_f32x4_splat(x0[k]), v1 = wasm_f32x4_splat(x1[k]);
+                const v128_t v2 = wasm_f32x4_splat(x2[k]), v3 = wasm_f32x4_splat(x3[k]);
+                a[0][0] = wasm_f32x4_add(a[0][0], wasm_f32x4_mul(v0, w0));
+                a[0][1] = wasm_f32x4_add(a[0][1], wasm_f32x4_mul(v0, w1));
+                a[0][2] = wasm_f32x4_add(a[0][2], wasm_f32x4_mul(v0, w2));
+                a[0][3] = wasm_f32x4_add(a[0][3], wasm_f32x4_mul(v0, w3));
+                a[1][0] = wasm_f32x4_add(a[1][0], wasm_f32x4_mul(v1, w0));
+                a[1][1] = wasm_f32x4_add(a[1][1], wasm_f32x4_mul(v1, w1));
+                a[1][2] = wasm_f32x4_add(a[1][2], wasm_f32x4_mul(v1, w2));
+                a[1][3] = wasm_f32x4_add(a[1][3], wasm_f32x4_mul(v1, w3));
+                a[2][0] = wasm_f32x4_add(a[2][0], wasm_f32x4_mul(v2, w0));
+                a[2][1] = wasm_f32x4_add(a[2][1], wasm_f32x4_mul(v2, w1));
+                a[2][2] = wasm_f32x4_add(a[2][2], wasm_f32x4_mul(v2, w2));
+                a[2][3] = wasm_f32x4_add(a[2][3], wasm_f32x4_mul(v2, w3));
+                a[3][0] = wasm_f32x4_add(a[3][0], wasm_f32x4_mul(v3, w0));
+                a[3][1] = wasm_f32x4_add(a[3][1], wasm_f32x4_mul(v3, w1));
+                a[3][2] = wasm_f32x4_add(a[3][2], wasm_f32x4_mul(v3, w2));
+                a[3][3] = wasm_f32x4_add(a[3][3], wasm_f32x4_mul(v3, w3));
+            }
+            for (int c = 0; c < 4; c++) {
+                wasm_v128_store(y0 + nb + 4 * c, a[0][c]);
+                wasm_v128_store(y1 + nb + 4 * c, a[1][c]);
+                wasm_v128_store(y2 + nb + 4 * c, a[2][c]);
+                wasm_v128_store(y3 + nb + 4 * c, a[3][c]);
+            }
+        }
+        for (; nb + 8 <= N8; nb += 8) {
+            v128_t a[4][2];
+            for (int c = 0; c < 2; c++) {
+                const v128_t init = b ? wasm_v128_load(b + nb + 4 * c) : wasm_f32x4_splat(0.0f);
+                a[0][c] = init; a[1][c] = init; a[2][c] = init; a[3][c] = init;
+            }
+            for (int k = 0; k < K; k++) {
+                const float *w = Wtr + (size_t)k * N + nb;
+                const v128_t w0 = wasm_v128_load(w), w1 = wasm_v128_load(w + 4);
+                const v128_t v0 = wasm_f32x4_splat(x0[k]), v1 = wasm_f32x4_splat(x1[k]);
+                const v128_t v2 = wasm_f32x4_splat(x2[k]), v3 = wasm_f32x4_splat(x3[k]);
+                a[0][0] = wasm_f32x4_add(a[0][0], wasm_f32x4_mul(v0, w0));
+                a[0][1] = wasm_f32x4_add(a[0][1], wasm_f32x4_mul(v0, w1));
+                a[1][0] = wasm_f32x4_add(a[1][0], wasm_f32x4_mul(v1, w0));
+                a[1][1] = wasm_f32x4_add(a[1][1], wasm_f32x4_mul(v1, w1));
+                a[2][0] = wasm_f32x4_add(a[2][0], wasm_f32x4_mul(v2, w0));
+                a[2][1] = wasm_f32x4_add(a[2][1], wasm_f32x4_mul(v2, w1));
+                a[3][0] = wasm_f32x4_add(a[3][0], wasm_f32x4_mul(v3, w0));
+                a[3][1] = wasm_f32x4_add(a[3][1], wasm_f32x4_mul(v3, w1));
+            }
+            for (int c = 0; c < 2; c++) {
+                wasm_v128_store(y0 + nb + 4 * c, a[0][c]);
+                wasm_v128_store(y1 + nb + 4 * c, a[1][c]);
+                wasm_v128_store(y2 + nb + 4 * c, a[2][c]);
+                wasm_v128_store(y3 + nb + 4 * c, a[3][c]);
+            }
+        }
+        for (; nb + 4 <= N4; nb += 4) {
+            v128_t a0 = b ? wasm_v128_load(b + nb) : wasm_f32x4_splat(0.0f);
+            v128_t a1 = a0, a2 = a0, a3 = a0;
+            for (int k = 0; k < K; k++) {
+                const v128_t w = wasm_v128_load(Wtr + (size_t)k * N + nb);
+                a0 = wasm_f32x4_add(a0, wasm_f32x4_mul(wasm_f32x4_splat(x0[k]), w));
+                a1 = wasm_f32x4_add(a1, wasm_f32x4_mul(wasm_f32x4_splat(x1[k]), w));
+                a2 = wasm_f32x4_add(a2, wasm_f32x4_mul(wasm_f32x4_splat(x2[k]), w));
+                a3 = wasm_f32x4_add(a3, wasm_f32x4_mul(wasm_f32x4_splat(x3[k]), w));
+            }
+            wasm_v128_store(y0 + nb, a0); wasm_v128_store(y1 + nb, a1);
+            wasm_v128_store(y2 + nb, a2); wasm_v128_store(y3 + nb, a3);
+        }
+        for (; nb < N; nb++) { /* reste scalaire */
+            float s0 = b ? b[nb] : 0.f, s1 = s0, s2 = s0, s3 = s0;
+            for (int k = 0; k < K; k++) {
+                const float w = Wtr[(size_t)k * N + nb];
+                s0 += x0[k] * w; s1 += x1[k] * w; s2 += x2[k] * w; s3 += x3[k] * w;
+            }
+            y0[nb] = s0; y1[nb] = s1; y2[nb] = s2; y3[nb] = s3;
+        }
+    }
+    for (int m = mblk << 2; m < M; m++) { /* lignes restantes : scalaire */
+        const float *x = X + (size_t)m * K;
+        float *y = Y + (size_t)m * N;
+        for (int nb = 0; nb < N; nb++) {
+            float s = b ? b[nb] : 0.f;
+            for (int k = 0; k < K; k++) s += x[k] * Wtr[(size_t)k * N + nb];
+            y[nb] = s;
+        }
+    }
+}
+#endif /* __wasm_simd128__ */
+
+
+/* ------------------------------- registre des poids quantifiés (packés) ---
+ * Les matrices sont quantifiées à la première utilisation de chaque tranche
+ * (forward appelle mm_nt_t avec WtT[p] + l*offset, donc la clé est le pointeur
+ * exact de la tranche). Le GEMM lit ensuite uniquement les octets packés.
+ */
+#define QREG 32
+static struct { const float *key; int K, N; QMat q; } g_qreg[QREG];
+static int g_qn = 0;
+static int g_qmode = 0;   /* 0 = FP32, 8 = int8 packé, 4 = int4 packé */
+static int g_qkern = 2;   /* 2 = meilleur noyau dispo, 1 = scalaire (A/B) */
+
+static void quantFreeAll(void) {
+    for (int i = 0; i < g_qn; i++) qMatFree(&g_qreg[i].q);
+    g_qn = 0;
+}
+static void quantSetMode(int bits) {
+    if (bits == g_qmode) return;
+    quantFreeAll();
+    g_qmode = bits;
+}
+static size_t quantBytes(void) {
+    size_t b = 0;
+    for (int i = 0; i < g_qn; i++) b += g_qreg[i].q.bytes;
+    return b;
+}
+static long quantFp32Bytes(void) {
+    long b = 0;
+    for (int i = 0; i < g_qn; i++) b += (long)g_qreg[i].K * g_qreg[i].N * 4;
+    return b;
+}
+static QMat *quantFind(const float *Wtr, int K, int N) {
+    for (int i = 0; i < g_qn; i++)
+        if (g_qreg[i].key == Wtr && g_qreg[i].K == K && g_qreg[i].N == N) return &g_qreg[i].q;
+    if (g_qn >= QREG) return NULL;
+    g_qreg[g_qn].key = Wtr; g_qreg[g_qn].K = K; g_qreg[g_qn].N = N;
+    qMatPack(Wtr, K, N, g_qmode, &g_qreg[g_qn].q);
+    return &g_qreg[g_qn++].q;
+}
+
 static void mm_nt_t(float *Y, const float *X, const float *Wrow, const float *Wtr,
                     const float *b, int M, int K, int N) {
+    if (g_qmode && Wtr) {
+        QMat *Q = quantFind(Wtr, K, N);
+        if (Q) {
+            const double tp0 = g_prof ? profNow() : 0;
+#if defined(__x86_64__) || defined(_M_X64)
+            if (cpuAvx2 < 0) cpuAvx2 = __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma");
+            if (cpuAvx2 && g_qkern >= 2) {
+                if (Q->bits == 8) mm_nt_t_q8_avx2(Y, X, Q, b, M, K, N);
+                else              mm_nt_t_q4_avx2(Y, X, Q, b, M, K, N);
+                if (g_prof) g_tGemm += profNow() - tp0;
+                return;
+            }
+#endif
+            if (Q->bits == 8) mm_nt_t_q_scalar(Y, X, Q, b, M, K, N);
+            else              mm_nt_t_q4_scalar(Y, X, Q, b, M, K, N);
+            if (g_prof) g_tGemm += profNow() - tp0;
+            return;
+        }
+    }
+#if defined(__wasm_simd128__) && !defined(LM_NO_WASM_SIMD)
+    if (!g_gemmOld) { /* 4 lignes M par tuile, v128 : même raison que le noyau AVX2 */
+        const double tp0 = g_prof ? profNow() : 0;
+#if defined(LM_WASM_1ROW)
+        mm_nt_t_wasm_1row(Y, X, Wtr, b, M, K, N);
+#else
+        mm_nt_t_wasm_mb4(Y, X, Wtr, b, M, K, N);
+#endif
+        if (g_prof) g_tGemm += profNow() - tp0;
+        return;
+    }
+#endif
 #if defined(__x86_64__) || defined(_M_X64)
     if (cpuAvx2 < 0) cpuAvx2 = __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma");
     if (cpuAvx512 < 0) cpuAvx512 = __builtin_cpu_supports("avx512f");

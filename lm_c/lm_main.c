@@ -278,6 +278,16 @@ static void quantTensor(const char *name, float *w, long n, int mode) {
 }
 
 static void quantModel(int mode) {
+    /* mode 2/3 : quantification RÉELLE — les poids sont packés en int8/int4 dans
+       une zone à part (lm_quant.h) et le GEMM multiplie des entiers ; le fp32
+       n'est plus relu. mode 1 (E8) reste une simulation de bruit (pas de format
+       packé exposé ici). */
+    if (mode == 2 || mode == 3) {
+        const int bits = (mode == 2) ? 8 : 4;
+        refreshWt();                /* WtT à jour avant de packer */
+        quantSetMode(bits);
+        return;
+    }
     const int mats[] = { P_WTE, P_QKVW, P_APW, P_F1W, P_F2W, P_WOUT };
     for (int p = 0; p < P_NUM; p++) {
         int isMat = 0;
@@ -504,10 +514,25 @@ int main(int argc, char **argv) {
 
     if (quantMode) {
         printf("== QUANTIFICATION (%s) ==\n",
-               quantMode == 1 ? "E8 ~7.1 bits/poids" : quantMode == 2 ? "INT8 bloc ~10 bits/poids" : "INT4 bloc ~6 bits/poids");
+               quantMode == 1 ? "E8 ~7.1 bits/poids (simulé)" :
+               quantMode == 2 ? "INT8 packé (1 octet/poids + échelle par colonne)" :
+                                "INT4 packé (2 poids/octet + échelle par colonne)");
         quantModel(quantMode);
         const float vQ = valLoss(&TR, B, 20);
         printf("  val loss quantifiée : %.3f (delta %+.3f)\n", vQ, vQ - vFP32);
+        if (quantMode == 2 || quantMode == 3) {
+            const size_t nb = quantBytes();
+            const long fb = quantFp32Bytes();
+            if (fb > 0)
+                printf("  poids : %.1f KiB fp32 -> %.1f KiB packés (x%.2f plus petit)\n",
+                       fb / 1024.0, nb / 1024.0, (double)fb / (double)nb);
+            if (gen > 0) {
+                const double t0 = now_s();
+                sample(&SA, gen, 0.8f);
+                const double dt = now_s() - t0;
+                printf("  debit quantifié : %.0f tok/s\n", gen / dt);
+            }
+        }
     }
     if (gen > 0) sample(&SA, gen, 0.8f);
 
