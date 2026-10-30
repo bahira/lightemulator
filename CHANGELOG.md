@@ -54,8 +54,11 @@ Deux blocages levés, et ils étaient réels.
 - `bench/bench_quant.c` : fp32 vs int8/int4 (scalaire, AVX2, VNNI) sur les 5 formes réelles.
 
 ### Mesuré / corrigé
-- **AVX-512 VNNI est une régression sur ce Xeon** (×0.63 vs fp32, ×0.44 vs int8 AVX2) :
-  downclock 512 bits + latence `dpbusd`. Le dispatch du modèle utilise le noyau AVX2.
+- **AVX-512 VNNI est une régression sur ce Xeon** (×0.64 vs fp32, ×0.45 vs int8 AVX2).
+  La cause supposée (downclock 512 bits) ne tient pas : `bench/probe_downclock.c` mesure le
+  même noyau AVX2 avant/après du 512 bits soutenu → **+3,5 % seulement**. Déplier 4 accumulateurs
+  par ligne ne change rien (×0.64). Conclusion mesurée : sur ce Xeon, `dpbusd` 512 bits ne bat
+  pas `maddubs` AVX2 pour ces tailles ; le dispatch garde AVX2.
 - **Le noyau int8/int4 dans wasm reste scalaire** : le mode INT8 y coûte ~9× le temps d’un FP32
   (103 vs 900 tok/s) en gagnant ×3.9 de mémoire — dit tel quel dans le lab.
 - `lm_c/lm_model.h` : les noyaux `*_mb4` AVX2/AVX-512 étaient **hors** du `#if __x86_64__` —
@@ -97,7 +100,8 @@ gradcheck PASS (0.0253), 44/44 tests JS, loss identique à 3 décimales.
 
 ### Mesuré (et ce que ça corrige)
 - **AVX-512 : la claim du README était fausse à moitié.** Porter le *même* noyau 1-ligne en
-  16 voies est **plus lent** (×0.87 : pression ports 512 bits + downclock). C'est le **blocage
+  16 voies est **plus lent** (×0.87 ; pression des ports 512 bits — le downclock mesuré n'est que
+  de 3,5 %, cf. `bench/probe_downclock.c`). C'est le **blocage
   4 lignes** qui paie — la largeur SIMD n'a jamais été le goulot.
 - Débit d'entraînement : 11,8–14,6 k → **15,6–19,1 k tok/s** (×1.28, 5 rondes appariées, 5.0σ).
 - GEMM wall time (40 steps, 5 rondes appariées) : 553–590 ms → **361–383 ms**

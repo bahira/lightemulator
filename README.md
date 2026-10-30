@@ -82,7 +82,7 @@ lm_c/lm_train.exe --steps 300 --gradcheck
 The original micro-kernel used **one accumulator chain** per 8-column tile → FMA latency (~4 cy) unmasked, ≈ 0.25 FMA/cy against a peak of 2. The fix: **4 tiles of 8 columns sharing a broadcast**, contiguous loads, 4 independent FMA chains — ×1.78–2.19 on real shapes (qkv, attn, fc1, fc2, out). The backward pass got the same treatment (`mm_dxd`, `mm_tndw` with register accumulators over the full M dimension).
 
 The honest parts: attention tiling caps at ×1.05 wall time (Amdahl — skipped on purpose), and `rsqrt` currently trades speed for accuracy.
-The AVX-512 claim was half-wrong and is now measured: porting the **same** 1-row kernel to 16 lanes is *slower* (×0.87 — 512-bit port pressure and downclock), but **4-row M blocking** cuts the W traffic by 4 and pays ×2.18 on the kernel (×1.86 for the AVX2-only variant) and ×1.44 on end-to-end GEMM. Width was never the bottleneck; traffic was.
+The AVX-512 claim was half-wrong and is now measured: porting the **same** 1-row kernel to 16 lanes is *slower* (×0.87 — 512-bit port pressure; the measured downclock is only 3.5 %, see `bench/probe_downclock.c`), but **4-row M blocking** cuts the W traffic by 4 and pays ×2.18 on the kernel (×1.86 for the AVX2-only variant) and ×1.44 on end-to-end GEMM. Width was never the bottleneck; traffic was.
 
 ## The verification loop
 
