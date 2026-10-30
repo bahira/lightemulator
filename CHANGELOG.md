@@ -37,7 +37,8 @@ gradcheck PASS (0.0253), 44/44 tests JS, loss identique à 3 décimales.
   16 voies est **plus lent** (×0.87 : pression ports 512 bits + downclock). C'est le **blocage
   4 lignes** qui paie — la largeur SIMD n'a jamais été le goulot.
 - Débit d'entraînement : 11,8–14,6 k → **15,6–19,1 k tok/s** (×1.28, 5 rondes appariées, 5.0σ).
-- GEMM wall time (40 steps) : 553–590 ms → **361–383 ms** (×1.52, 6.6σ).
+- GEMM wall time (40 steps, 5 rondes appariées) : 553–590 ms → **361–383 ms**
+  (×1.44 médian, 6.9σ ; 1.28–1.85 selon les rondes).
 
 [1.2.0]: https://github.com/bahira/lightemulator/releases/tag/v1.2.0
 
