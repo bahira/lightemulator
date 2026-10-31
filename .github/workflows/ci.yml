@@ -32,6 +32,15 @@ jobs:
           exit "$rc"
       - name: la démo publiée (docs/) est à jour avec les sources
         run: npm run docs:check
+      - name: wasm SIMD v128 — reconstruire depuis la source et attribuer le gain
+        run: |
+          if ! python3 -m pip install --quiet --disable-pip-version-check --break-system-packages ziglang 2>/dev/null \
+             && ! python3 -m pip install --quiet --disable-pip-version-check --user ziglang 2>/dev/null; then
+            echo "· ziglang indisponible (pip) — reconstruction wasm sautée"; exit 0
+          fi
+          python3 -m ziglang version
+          npm run bench:wasm
+          npm run bench:wasm-quant
       - name: chaîne d'inférence wasm (assets + dimensions + quantification)
         run: npm run verify:inference
 
@@ -81,6 +90,18 @@ jobs:
             cat /tmp/bench_mm_no512.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: quantification int8/int4 packée — parité + A/B
+        run: |
+          set +e
+          node tools/bench_quant.mjs 2>&1 | tee /tmp/bench_quant.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            msg=$(tail -c 900 /tmp/bench_quant.txt | tr '\n' ' ' | tr -d '%\r')
+            echo "::error title=quantisation::$msg"
+            exit "$rc"
+          fi
+          { echo "### Quantification int8/int4"; echo '```'; tail -12 /tmp/bench_quant.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: claims — re-mesure sur le runner (CPU/gcc réels)
         run: |
           node tools/claims.mjs | tee /tmp/claims.md

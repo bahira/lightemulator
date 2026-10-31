@@ -2,6 +2,72 @@
 
 Toutes les modifications notables de ce projet. Format basé sur [Keep a Changelog](https://keepachangelog.com/), semver.
 
+## [1.3.1] — 2026-10-30
+
+### Ajouté — int8/int4 vectorisés dans le navigateur
+- `mm_nt_t_q8_wasm` : déquantification **par panneau de 16 colonnes**, réutilisée sur toutes les
+  lignes M (amortie ~1/64), activations déquantifiées une fois par ligne, puis GEMM v128 à
+  4 lignes M — même structure que le noyau FP32. Palier 8 colonnes pour les formes du modèle
+  (N = 72 / 104 / 216, dont le reste 8 tombait auparavant en scalaire).
+- Mesuré (`npm run bench:wasm-quant`, 5 rondes appariées, glouton) : FP32 965 tok/s ·
+  **INT8 623–682 (×0.65–0.70)** · **INT4 680–695 (×0.70–0.71)**, poids 1 055 → 271 → 146 KiB, sorties identiques.
+  Avant cette passe, le mode INT8 tournait à **103 tok/s (×0.11)** : c'est ×6.
+- `tools/bench_wasm_quant.mjs` : mesure FP32/INT8/INT4 dans le même module, échoue si un mode
+  quantifié passe sous 0,4× le FP32. Branché en CI avec `bench:wasm`.
+
+### Limite mesurée (et non contournée)
+- Le checkpoint livré n'est **pas reproductible depuis le corpus du dépôt** : le corpus de
+  `ci-data/` donne V=59, le checkpoint livré a V=104 (val 2.98 contre 3.07 pour V=59).
+- Plus d'entraînement ne corrige pas le texte : 1 200 puis 2 500 steps sur ces 32 Ko laissent
+  la val loss à ~3,07 et l'échantillon bruité. Le plafond est le **corpus**, pas le noyau —
+  c'est écrit dans le lab plutôt que masqué par un meilleur décodage.
+
+[1.3.1]: https://github.com/bahira/lightemulator/releases/tag/v1.3.1
+
+## [1.3.0] — 2026-10-30
+
+Deux blocages levés, et ils étaient réels.
+
+### Ajouté — toolchain wasm reproductible
+- `tools/build_wasm.mjs` + `tools/wasm_harness.mjs` : reconstruisent `public/lm_infer.wasm`
+  depuis `lm_c/lm_wasm.c` avec le premier compilateur disponible (`$ZIG_CC`, `zig`,
+  `python -m ziglang`, `emcc`, `clang`). `pip install ziglang` suffit — plus besoin de wasi-sdk.
+  Le script refuse d’écrire si la génération gloutonne change, et affiche le rapport avec le module publié.
+- `bench:wasm` mesure le module à trois étages (scalaire / v128 1 ligne / v128 4 lignes).
+
+### Ajouté — GEMM v128 bloqué dans le navigateur
+- `mm_nt_t_wasm_mb4` : 4 lignes M × tuiles de 16 colonnes (4 v128 d’accumulateurs), plus tuiles
+  8 et 4 et restes scalaires. Débit **205 → 970 tok/s (×4.5, 15–26σ sur 3 sessions)**, sorties glouton identiques.
+  Attribution mesurée : ×3.4 par la largeur v128, ×1.4 par le blocage 4 lignes.
+- La variable `mm_nt_t_wasm_1row` (`-DLM_WASM_1ROW`) existe pour refaire l’attribution.
+
+### Ajouté — quantification réelle int8 / int4 (issue #17)
+- `lm_c/lm_quant.h` : poids packés (1 octet/poids, 2 poids/octet), échelle par colonne,
+  somme de colonne pour corriger le point zéro 64 des activations, et GEMM qui multiplie des
+  entiers : `maddubs` (AVX2), `dpbusd` (AVX-512 VNNI), scalaire ailleurs. Déquantification à
+  l’accumulation, jamais de copie fp32.
+- Modèle : `--quant-int8` / `--quant-int4` évaluent le vrai chemin packé — val loss
+  **3.567 → 3.564 / 3.563**, poids **989 KiB → 268 KiB (×3.69) / 144 KiB (×6.85)**.
+- wasm : `wasm_quant(2|3)` bascule sur les poids packés, `wasm_mem_weights()` expose les octets
+  réellement occupés, le lab affiche « poids 271 KiB » à côté du débit, `verify:inference`
+  vérifie les ratios (×3.89 / ×7.21) et la parité gloutonne avec FP32 (120/120 caractères).
+- `bench/bench_quant.c` : fp32 vs int8/int4 (scalaire, AVX2, VNNI) sur les 5 formes réelles.
+
+### Mesuré / corrigé
+- **AVX-512 VNNI est une régression sur ce Xeon** (×0.64 vs fp32, ×0.45 vs int8 AVX2).
+  La cause supposée (downclock 512 bits) ne tient pas : `bench/probe_downclock.c` mesure le
+  même noyau AVX2 avant/après du 512 bits soutenu → **+3,5 % seulement**. Déplier 4 accumulateurs
+  par ligne ne change rien (×0.64). Conclusion mesurée : sur ce Xeon, `dpbusd` 512 bits ne bat
+  pas `maddubs` AVX2 pour ces tailles ; le dispatch garde AVX2.
+- **Le noyau int8/int4 dans wasm reste scalaire** : le mode INT8 y coûte ~9× le temps d’un FP32
+  (103 vs 900 tok/s) en gagnant ×3.9 de mémoire — dit tel quel dans le lab.
+- `lm_c/lm_model.h` : les noyaux `*_mb4` AVX2/AVX-512 étaient **hors** du `#if __x86_64__` —
+  wasm et ARM ne compilaient pas. Corrigé (c’est ce qui bloquait la reconstruction).
+- `verify:inference` : vues `Float32Array` recréées après `wasm_quant` (le packing alloue et
+  détache le buffer).
+
+[1.3.0]: https://github.com/bahira/lightemulator/releases/tag/v1.3.0
+
 ## [1.2.0] — 2026-10-30
 
 Perf, mesurée et falsifiable. Aucune régression de justesse : autotest GEMM `max|diff| = 0`,
@@ -34,7 +100,8 @@ gradcheck PASS (0.0253), 44/44 tests JS, loss identique à 3 décimales.
 
 ### Mesuré (et ce que ça corrige)
 - **AVX-512 : la claim du README était fausse à moitié.** Porter le *même* noyau 1-ligne en
-  16 voies est **plus lent** (×0.87 : pression ports 512 bits + downclock). C'est le **blocage
+  16 voies est **plus lent** (×0.87 ; pression des ports 512 bits — le downclock mesuré n'est que
+  de 3,5 %, cf. `bench/probe_downclock.c`). C'est le **blocage
   4 lignes** qui paie — la largeur SIMD n'a jamais été le goulot.
 - Débit d'entraînement : 11,8–14,6 k → **15,6–19,1 k tok/s** (×1.28, 5 rondes appariées, 5.0σ).
 - GEMM wall time (40 steps, 5 rondes appariées) : 553–590 ms → **361–383 ms**

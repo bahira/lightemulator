@@ -1,7 +1,7 @@
 {
   "name": "react-vite-tailwind",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.3.1",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -18,7 +18,11 @@
     "smoke:dom": "esbuild tools/dom_smoke.tsx --bundle --platform=node --format=esm --outfile=.dom-smoke.mjs --jsx=automatic --external:react --external:react-dom --external:react-dom/client --external:react/jsx-runtime --external:jsdom && node .dom-smoke.mjs",
     "docs:check": "node tools/prepare_inference_assets.mjs && vite build && node tools/sync_docs.mjs --check",
     "claims": "node tools/claims.mjs",
-    "claims:write": "node tools/claims.mjs --write"
+    "claims:write": "node tools/claims.mjs --write",
+    "build:wasm": "node tools/build_wasm.mjs --write",
+    "bench:wasm": "node tools/bench_wasm_gemm.mjs",
+    "bench:quant": "node tools/bench_quant.mjs",
+    "bench:wasm-quant": "node tools/bench_wasm_quant.mjs"
   },
   "dependencies": {
     "clsx": "2.1.1",
